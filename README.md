@@ -54,13 +54,13 @@
 ### One-Line Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/rally-agent/rally-agent/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Atum246/rally-agent/main/install.sh | bash
 ```
 
 ### Manual Install
 
 ```bash
-git clone https://github.com/rally-agent/rally-agent.git
+git clone https://github.com/Atum246/rally-agent.git
 cd rally-agent
 chmod +x install.sh
 ./install.sh
