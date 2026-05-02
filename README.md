@@ -966,7 +966,7 @@ RALLY_SECRET_KEY=your-secret-key
 
 ## 🐳 Docker
 
-### Quick Start
+### Start & Stop
 
 ```bash
 # Start
@@ -982,7 +982,7 @@ docker-compose down
 docker-compose build --no-cache && docker-compose up -d
 ```
 
-### Environment
+### Environment File
 
 Create a `.env` file:
 

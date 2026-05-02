@@ -1694,6 +1694,264 @@ function closeModal() {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// 🧙 Onboarding Wizard
+// ═══════════════════════════════════════════════════════════════
+let obStep = 0;
+let obData = { provider: '', api_key: '', model: '', voice: {}, browser: {}, name: 'User' };
+let obGuides = {};
+const obStepsMeta = ['welcome','provider','api_key','model','extras','name','complete'];
+
+async function checkOnboarding() {
+  try {
+    const resp = await fetch('/api/setup/status');
+    const data = await resp.json();
+    if (data.is_first_run) {
+      obGuides = data.providers || {};
+      showOnboarding();
+      return true;
+    }
+  } catch(e) {}
+  return false;
+}
+
+function showOnboarding() {
+  document.getElementById('loginPage').style.display = 'none';
+  document.getElementById('onboardingPage').style.display = 'block';
+  renderObStep();
+}
+
+function renderObStep() {
+  const dots = obStepsMeta.map((_, i) => {
+    let cls = 'onboarding-dot';
+    if (i === obStep) cls += ' active';
+    else if (i < obStep) cls += ' done';
+    return `<div class="${cls}"></div>`;
+  }).join('');
+  document.getElementById('obSteps').innerHTML = dots;
+  document.getElementById('obBack').style.display = obStep > 0 && obStep < obStepsMeta.length - 1 ? 'inline-flex' : 'none';
+
+  const step = obStepsMeta[obStep];
+  const content = document.getElementById('obContent');
+  const nextBtn = document.getElementById('obNext');
+
+  if (step === 'welcome') {
+    nextBtn.textContent = "Let's go →";
+    content.innerHTML = `
+      <div style="text-align:center;padding:20px 0">
+        <div style="font-size:3rem;margin-bottom:16px">🚀</div>
+        <h2 style="color:var(--purple-300);margin-bottom:12px">Welcome to Rally Agent</h2>
+        <p style="color:var(--text-dim);font-size:0.92rem;max-width:400px;margin:0 auto;line-height:1.7">
+          Your self-hosted AI platform with <strong style="color:var(--purple-400)">36+ providers</strong>,
+          <strong style="color:var(--purple-400)">voice</strong>,
+          <strong style="color:var(--purple-400)">browser automation</strong>, and more.<br><br>
+          Let's get you configured in a few quick steps.
+        </p>
+      </div>
+    `;
+  } else if (step === 'provider') {
+    nextBtn.textContent = 'Continue →';
+    const providers = Object.entries(obGuides);
+    content.innerHTML = `
+      <div class="ob-section">
+        <h3>Choose your AI provider</h3>
+        <div class="ob-provider-grid">
+          ${providers.map(([key, g]) => `
+            <div class="ob-provider ${obData.provider === key ? 'selected' : ''}" onclick="obSelectProvider('${key}')">
+              <span class="icon">${g.icon}</span>
+              <div>
+                <div class="name">${escHtml(g.name)}</div>
+                <div class="desc">${escHtml(g.description)}</div>
+              </div>
+              <span class="key-badge ${g.requires_key ? 'needs-key' : 'no-key'}">${g.requires_key ? '🔑' : '🆓'}</span>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `;
+  } else if (step === 'api_key') {
+    const guide = obGuides[obData.provider] || {};
+    if (!guide.requires_key) {
+      obStep++; renderObStep(); return;
+    }
+    nextBtn.textContent = 'Verify & Continue →';
+    content.innerHTML = `
+      <div class="ob-section">
+        <h3>${guide.icon} ${escHtml(guide.name)} — API Key</h3>
+        <div class="ob-guide-box">${escHtml(guide.how_to_get_key || '')}</div>
+        ${guide.url ? `<p style="font-size:0.82rem;margin-bottom:16px">🔗 <a href="${escHtml(guide.url)}" target="_blank">${escHtml(guide.url)}</a></p>` : ''}
+        <div class="input-group">
+          <label class="input-label">Paste your API key</label>
+          <input id="obApiKey" type="password" class="input" placeholder="${escHtml(guide.key_prefix || '')}..." value="${escHtml(obData.api_key)}">
+        </div>
+      </div>
+    `;
+    setTimeout(() => document.getElementById('obApiKey')?.focus(), 100);
+  } else if (step === 'model') {
+    const guide = obGuides[obData.provider] || {};
+    const models = guide.models || [];
+    const defaultModel = guide.default_model || (models[0] || '');
+    nextBtn.textContent = 'Continue →';
+    content.innerHTML = `
+      <div class="ob-section">
+        <h3>Choose default model</h3>
+        <div class="ob-model-list">
+          ${models.map(m => `
+            <div class="ob-model ${obData.model === m ? 'selected' : ''} ${m === defaultModel && !obData.model ? 'selected default' : ''}"
+                 onclick="obSelectModel('${escHtml(m)}')">${escHtml(m)}</div>
+          `).join('')}
+        </div>
+      </div>
+    `;
+    if (!obData.model && defaultModel) obData.model = defaultModel;
+  } else if (step === 'extras') {
+    nextBtn.textContent = 'Continue →';
+    content.innerHTML = `
+      <div class="ob-section">
+        <h3>Optional Features</h3>
+        <div style="display:flex;flex-direction:column;gap:14px">
+          <label style="display:flex;align-items:center;gap:12px;padding:14px;background:var(--bg-800);border:1px solid var(--border);border-radius:10px;cursor:pointer">
+            <input type="checkbox" id="obVoice" ${obData.voice?.enabled ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple-500)">
+            <div>
+              <div style="font-weight:600;color:var(--text)">🎤 Voice Input/Output</div>
+              <div style="font-size:0.78rem;color:var(--text-dim)">Speak to Rally and hear responses</div>
+            </div>
+          </label>
+          <label style="display:flex;align-items:center;gap:12px;padding:14px;background:var(--bg-800);border:1px solid var(--border);border-radius:10px;cursor:pointer">
+            <input type="checkbox" id="obBrowser" ${obData.browser?.enabled ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple-500)">
+            <div>
+              <div style="font-weight:600;color:var(--text)">🌐 Browser Automation</div>
+              <div style="font-size:0.78rem;color:var(--text-dim)">Let Rally browse the web for you</div>
+            </div>
+          </label>
+        </div>
+      </div>
+    `;
+  } else if (step === 'name') {
+    nextBtn.textContent = 'Finish Setup →';
+    content.innerHTML = `
+      <div class="ob-section">
+        <h3>What should we call you?</h3>
+        <div class="input-group">
+          <input id="obName" class="input" placeholder="Your name" value="${escHtml(obData.name || '')}">
+        </div>
+      </div>
+    `;
+    setTimeout(() => document.getElementById('obName')?.focus(), 100);
+  } else if (step === 'complete') {
+    const guide = obGuides[obData.provider] || {};
+    nextBtn.textContent = '🚀 Launch Rally Agent';
+    document.getElementById('obBack').style.display = 'none';
+    content.innerHTML = `
+      <div class="ob-success">
+        <div class="checkmark">🎉</div>
+        <h2>Setup Complete!</h2>
+        <p style="margin:12px 0">
+          Provider: <strong style="color:var(--purple-300)">${guide.icon || ''} ${escHtml(guide.name || obData.provider)}</strong><br>
+          Model: <strong style="color:var(--purple-300)">${escHtml(obData.model)}</strong><br>
+          Welcome, <strong style="color:var(--purple-300)">${escHtml(obData.name)}</strong>!
+        </p>
+      </div>
+    `;
+  }
+}
+
+function obSelectProvider(key) {
+  obData.provider = key;
+  const guide = obGuides[key] || {};
+  obData.model = guide.default_model || '';
+  obData.api_key = '';
+  renderObStep();
+}
+
+function obSelectModel(model) {
+  obData.model = model;
+  renderObStep();
+}
+
+async function obNext() {
+  const step = obStepsMeta[obStep];
+
+  if (step === 'provider' && !obData.provider) {
+    toast('Please select a provider', 'error');
+    return;
+  }
+  if (step === 'api_key') {
+    const input = document.getElementById('obApiKey');
+    obData.api_key = input ? input.value.trim() : '';
+    const guide = obGuides[obData.provider] || {};
+    if (guide.requires_key && !obData.api_key) {
+      toast('API key is required', 'error');
+      return;
+    }
+  }
+  if (step === 'extras') {
+    obData.voice = { enabled: document.getElementById('obVoice')?.checked || false };
+    obData.browser = { enabled: document.getElementById('obBrowser')?.checked || false };
+  }
+  if (step === 'name') {
+    obData.name = document.getElementById('obName')?.value?.trim() || 'User';
+  }
+  if (step === 'complete') {
+    await obSubmit();
+    return;
+  }
+
+  obStep++;
+  renderObStep();
+}
+
+function obPrev() {
+  if (obStep > 0) {
+    // Skip api_key step if provider doesn't require key
+    if (obStepsMeta[obStep - 1] === 'api_key') {
+      const guide = obGuides[obData.provider] || {};
+      if (!guide.requires_key) { obStep -= 2; renderObStep(); return; }
+    }
+    obStep--;
+    renderObStep();
+  }
+}
+
+async function obSubmit() {
+  try {
+    const resp = await fetch('/api/setup/complete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(obData),
+    });
+    const data = await resp.json();
+    if (data.status === 'ok') {
+      toast('Setup complete! 🎉', 'success');
+      document.getElementById('onboardingPage').style.display = 'none';
+      // Show login or go straight to app
+      if (obData.api_key) {
+        // Auto-register admin and enter app
+        try {
+          const regResp = await fetch('/api/auth/register', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: 'admin', password: 'admin' }),
+          });
+          const regData = await regResp.json();
+          if (regData.token) {
+            authToken = regData.token;
+            localStorage.setItem('rally_token', authToken);
+            currentUser = 'admin';
+            enterApp();
+            return;
+          }
+        } catch(e) {}
+      }
+      document.getElementById('loginPage').style.display = 'flex';
+    } else {
+      toast('Error: ' + (data.error || 'Setup failed'), 'error');
+    }
+  } catch(e) {
+    toast('Setup error: ' + e.message, 'error');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
 // 🚀 Init
 // ═══════════════════════════════════════════════════════════════
 if (authToken) {
@@ -1703,10 +1961,16 @@ if (authToken) {
     enterApp();
   }).catch(() => {
     authToken = ''; localStorage.removeItem('rally_token');
-    document.getElementById('loginPage').style.display = 'flex';
+    // Check onboarding before showing login
+    checkOnboarding().then(needsSetup => {
+      if (!needsSetup) document.getElementById('loginPage').style.display = 'flex';
+    });
   });
 } else {
-  document.getElementById('loginPage').style.display = 'flex';
+  // Check onboarding before showing login
+  checkOnboarding().then(needsSetup => {
+    if (!needsSetup) document.getElementById('loginPage').style.display = 'flex';
+  });
 }
 </script>
 </body>
