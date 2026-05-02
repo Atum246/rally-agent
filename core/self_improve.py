@@ -913,6 +913,20 @@ class SelfImprovementEngine:
         self._save_all()
         return report
 
+    def get_report(self) -> Dict[str, Any]:
+        """Get a summary report of the self-improvement engine state."""
+        return {
+            "learnings": len(self._learnings),
+            "preferences": len(self._preferences),
+            "expertise_areas": len(self._expertise),
+            "knowledge_graph_nodes": len(self._knowledge_nodes),
+            "knowledge_graph_edges": len(self._knowledge_edges),
+            "metrics_collected": len(self._metrics),
+            "reports_generated": len(self._reports),
+            "top_preferences": self.get_preferences_summary(),
+            "expertise_profile": self.get_expertise_profile(),
+        }
+
     def _generate_recommendations(
         self,
         learnings: List[Learning],

@@ -147,7 +147,7 @@ class ConfigSchema:
 SCHEMAS: list[ConfigSchema] = [
     ConfigSchema("agent", [
         ConfigField("name", ConfigFieldType.STRING, default="Rally", description="Agent display name"),
-        ConfigField("version", ConfigFieldType.STRING, default="1.0.0", description="Agent version"),
+        ConfigField("version", ConfigFieldType.STRING, default="2.0.0", description="Agent version"),
         ConfigField("default_model", ConfigFieldType.STRING, default="auto", description="Default LLM model"),
         ConfigField("thinking", ConfigFieldType.BOOLEAN, default=True, description="Enable thinking mode"),
         ConfigField("max_context", ConfigFieldType.INTEGER, default=128000, min_value=1024, max_value=2000000,
@@ -442,7 +442,7 @@ class RallyConfig:
     DEFAULT_CONFIG = {
         "agent": {
             "name": "Rally",
-            "version": "1.0.0",
+            "version": "2.0.0",
             "default_model": "auto",
             "thinking": True,
             "max_context": 128000,

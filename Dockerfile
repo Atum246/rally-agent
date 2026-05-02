@@ -41,7 +41,7 @@ LABEL org.opencontainers.image.title="Rally Agent"
 LABEL org.opencontainers.image.description="The OpenClaw Killer — Your AI. Your Rules. Your Data."
 LABEL org.opencontainers.image.url="https://github.com/Atum246/rally-agent"
 LABEL org.opencontainers.image.source="https://github.com/Atum246/rally-agent"
-LABEL org.opencontainers.image.version="1.0.0"
+LABEL org.opencontainers.image.version="2.0.0"
 LABEL org.opencontainers.image.licenses="MIT"
 
 # Install minimal runtime dependencies

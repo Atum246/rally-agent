@@ -47,7 +47,7 @@ SUBTITLE = "[#d946ef]━━━ Autonomous AI Development Platform ━━━[/]"
 
 # Version line with command hints
 VERSION_LINE = (
-    "[dim]v1.0.0[/] [#22d3ee]•[/] "
+    "[dim]v2.0.0[/] [#22d3ee]•[/] "
     "[dim]Type [bold #c084fc]help[/] for commands, [bold #c084fc]exit[/] to quit[/]"
 )
 
@@ -203,7 +203,7 @@ def show_status_banner(
     table.add_row("📊 Tokens Used", f"{tokens_used:,}")
     table.add_row("⏱️ Uptime", uptime)
     table.add_row("💻 Platform", f"{platform.system()} {platform.machine()}")
-    table.add_row("🔗 Version", "1.0.0 NEXUS")
+    table.add_row("🔗 Version", "2.0.0 NEXUS")
 
     console.print()
     console.print(Panel(

@@ -22,7 +22,7 @@ if readme.exists():
     long_description = readme.read_text(encoding="utf-8")
 
 # Read version from core/version.py
-version = "1.0.0"
+version = "2.0.0"
 version_file = here / "core" / "version.py"
 if version_file.exists():
     for line in version_file.read_text().splitlines():

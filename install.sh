@@ -15,7 +15,7 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 set -euo pipefail
 
-RALLY_VERSION="1.0.0"
+RALLY_VERSION="2.0.0"
 RALLY_HOME="${RALLY_HOME:-$HOME/.rally-agent}"
 REPO_URL="https://github.com/Atum246/rally-agent"
 PYTHON_MIN_MAJOR=3

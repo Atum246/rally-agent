@@ -239,22 +239,22 @@ def main():
     elif cmd in ("web",):
         engine.initialize()
         port = int(args[1]) if len(args) > 1 else 8778
-        from web.server import start_web_server
-        start_web_server(engine, port)
+        from web.server import run_server
+        run_server(engine, port=port)
 
     elif cmd in ("serve", "server"):
         engine.initialize()
         port = int(args[1]) if len(args) > 1 else 8777
-        from web.server import start_web_server
-        start_web_server(engine, port)
+        from web.server import run_server
+        run_server(engine, port=port)
 
     # ── Daemon ────────────────────────────────────────────────
     elif cmd in ("daemon", "d"):
         if len(args) > 1 and args[1] == "start":
             engine.initialize()
             logger.info("Starting Rally Agent daemon...")
-            from web.server import start_web_server
-            start_web_server(engine, 8778)
+            from web.server import run_server
+            run_server(engine, port=8778)
         else:
             print("Usage: rally daemon start")
 
