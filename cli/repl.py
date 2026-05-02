@@ -34,6 +34,13 @@ HELP_HINT = (
     "[bold #c084fc]/metrics[/] "
     "[bold #c084fc]/plugins[/] "
     "[bold #c084fc]/config[/] "
+    "[bold #c084fc]/cron[/] "
+    "[bold #c084fc]/profile[/] "
+    "[bold #c084fc]/knowledge[/] "
+    "[bold #c084fc]/workflow[/] "
+    "[bold #c084fc]/improve[/] "
+    "[bold #c084fc]/computer[/] "
+    "[bold #c084fc]/system[/] "
     "[bold #c084fc]/exit[/]"
     "[/]"
 )
@@ -44,7 +51,8 @@ SLASH_COMMANDS = [
     "/save", "/load", "/task", "/spawn", "/compact",
     "/voice", "/swarm", "/browser", "/sandbox", "/plugins",
     "/users", "/metrics", "/security", "/rag", "/branch",
-    "/feedback",
+    "/feedback", "/cron", "/profile", "/knowledge", "/workflow",
+    "/improve", "/computer", "/system",
 ]
 
 
@@ -401,6 +409,15 @@ class RallyREPL:
 
             # Feedback
             "feedback": self._cmd_feedback,
+
+            # New integrated subsystems
+            "cron": self._cmd_cron,
+            "profile": self._cmd_profile,
+            "knowledge": self._cmd_knowledge,
+            "workflow": self._cmd_workflow,
+            "improve": self._cmd_improve,
+            "computer": self._cmd_computer,
+            "system": self._cmd_system,
         }
 
         handler = commands.get(command)
@@ -892,3 +909,270 @@ class RallyREPL:
                 f.write(json.dumps(entry) + "\n")
         except Exception:
             pass
+
+    # ── New Integrated Subsystem Commands ─────────────────────
+
+    def _cmd_cron(self, args):
+        """Cron job management."""
+        if not args:
+            jobs = self.engine.list_cron_jobs()
+            if not jobs:
+                Theme.info("No cron jobs scheduled. Use /cron add <schedule> <task>")
+                return
+            from rich.table import Table
+            table = Theme.create_table("⏰ Cron Jobs")
+            table.add_column("ID", style="cyan", width=10)
+            table.add_column("Name", style="neon")
+            table.add_column("Schedule", style="green")
+            table.add_column("Type", style="dim")
+            table.add_column("Runs", style="green")
+            table.add_column("Last Run", style="dim")
+            for j in jobs:
+                table.add_row(
+                    j["id"], j["name"], j["schedule"], j.get("type", "agent"),
+                    str(j.get("run_count", 0)),
+                    (j.get("last_run") or "Never")[:16],
+                )
+            console.print()
+            console.print(table)
+            console.print()
+            return
+
+        action = args[0].lower()
+
+        if action == "add" and len(args) >= 3:
+            schedule = args[1]
+            task = " ".join(args[2:])
+            result = self.engine.add_cron_job(schedule, task)
+            Theme.success(f"Job created: {result.get('name', task[:30])} (schedule: {schedule})")
+
+        elif action == "remove" and len(args) >= 2:
+            success = self.engine.remove_cron_job(args[1])
+            if success:
+                Theme.success(f"Job removed: {args[1]}")
+            else:
+                Theme.error(f"Job not found: {args[1]}")
+
+        elif action == "run" and len(args) >= 2:
+            Theme.step(f"Running job: {args[1]}")
+            result = asyncio.run(self.engine.run_cron_job(args[1]))
+            if "error" in result:
+                Theme.error(result["error"])
+            else:
+                Theme.success(f"Job completed in {result.get('duration_ms', 0):.0f}ms")
+                if result.get("result"):
+                    console.print(Theme.panel("result", result["result"][:500]))
+
+        elif action == "history":
+            history = self.engine.get_cron_history()
+            for h in history[-10:]:
+                status = "✅" if not h.get("error") else "❌"
+                console.print(f"  {status} {h.get('job_name', '?')} — {(h.get('result') or h.get('error', ''))[:60]}")
+
+        else:
+            Theme.warning("Usage: /cron [list|add <schedule> <task>|remove <id>|run <id>|history]")
+
+    def _cmd_profile(self, args):
+        """Show user profile."""
+        profile = self.engine.get_user_profile()
+        if "error" in profile:
+            Theme.error(profile["error"])
+            return
+        console.print()
+        console.print(profile.get("summary", "No profile data"))
+        console.print()
+
+    def _cmd_knowledge(self, args):
+        """Knowledge graph operations."""
+        if not args:
+            stats = self.engine.get_knowledge_graph_stats()
+            if "error" in stats:
+                Theme.error(stats["error"])
+                return
+            table = Theme.create_table("🕸️ Knowledge Graph")
+            table.add_column("Metric", style="cyan")
+            table.add_column("Value", style="neon_green")
+            table.add_row("Entities", str(stats.get("total_entities", 0)))
+            table.add_row("Relationships", str(stats.get("total_relationships", 0)))
+            for t, c in stats.get("entity_types", {}).items():
+                table.add_row(f"  {t}", str(c))
+            console.print()
+            console.print(table)
+            console.print()
+            return
+
+        action = args[0].lower()
+
+        if action == "search" and len(args) >= 2:
+            query = " ".join(args[1:])
+            results = self.engine.search_knowledge(query)
+            if not results:
+                Theme.info(f"No results for: {query}")
+                return
+            for r in results[:10]:
+                console.print(f"  [cyan]{r.get('score', 0):.2f}[/] [{r.get('type', '?')}] {r.get('name', '?')}")
+
+        elif action == "stats":
+            stats = self.engine.get_knowledge_graph_stats()
+            console.print(json.dumps(stats, indent=2))
+
+        else:
+            Theme.warning("Usage: /knowledge [search <query>|stats]")
+
+    def _cmd_workflow(self, args):
+        """Workflow management."""
+        if not args or args[0] == "list":
+            workflows = self.engine.list_workflows()
+            if not workflows:
+                Theme.info("No workflows recorded. Use /workflow record <name>")
+                return
+            from rich.table import Table
+            table = Theme.create_table("🔄 Workflows")
+            table.add_column("Name", style="neon")
+            table.add_column("Steps", style="green")
+            table.add_column("Created", style="dim")
+            table.add_column("Replays", style="green")
+            for w in workflows:
+                table.add_row(
+                    w["name"], str(w.get("step_count", 0)),
+                    (w.get("created_at") or "")[:10],
+                    str(w.get("replay_count", 0)),
+                )
+            console.print()
+            console.print(table)
+            console.print()
+            return
+
+        action = args[0].lower()
+
+        if action == "record" and len(args) >= 2:
+            name = " ".join(args[1:])
+            result = self.engine.record_workflow(name)
+            if "error" in result:
+                Theme.error(result["error"])
+            else:
+                Theme.success(f"Recording workflow: {name} — perform your actions, then /workflow stop")
+
+        elif action == "stop":
+            result = self.engine.stop_recording_workflow()
+            if result:
+                Theme.success(f"Workflow saved: {result.get('name', '?')} ({result.get('step_count', 0)} steps)")
+            else:
+                Theme.info("Not currently recording")
+
+        elif action == "replay" and len(args) >= 2:
+            name = " ".join(args[1:])
+            Theme.step(f"Replaying workflow: {name}")
+            result = asyncio.run(self.engine.replay_workflow(name))
+            if "error" in result:
+                Theme.error(result["error"])
+            else:
+                Theme.success(f"Replayed {result.get('total_steps', 0)} steps")
+
+        else:
+            Theme.warning("Usage: /workflow [list|record <name>|stop|replay <name>]")
+
+    def _cmd_improve(self, args):
+        """Show improvement report."""
+        report = self.engine.get_improvement_report()
+        if "error" in report:
+            Theme.error(report["error"])
+            return
+
+        table = Theme.create_table("📈 Self-Improvement Report")
+        table.add_column("Metric", style="cyan")
+        table.add_column("Value", style="neon_green")
+        table.add_row("Total Learnings", str(report.get("total_entries", 0)))
+        table.add_row("Corrections", str(report.get("total_corrections", 0)))
+        table.add_row("Insights", str(report.get("total_insights", 0)))
+        table.add_row("Health Score", f"{report.get('health_score', 100)}%")
+        for cat, cnt in report.get("categories", {}).items():
+            table.add_row(f"  {cat}", str(cnt))
+        console.print()
+        console.print(table)
+
+        top_errors = report.get("top_errors", [])
+        if top_errors:
+            console.print("\n  [red]Top Errors:[/]")
+            for e in top_errors[:5]:
+                console.print(f"    [red]{e['count']}x[/] {e['error']}")
+
+        recent = report.get("recent_learnings", [])
+        if recent:
+            console.print("\n  [dim]Recent:[/]")
+            for l in recent[-5:]:
+                console.print(f"    [{l['category']}] {l['description'][:60]}")
+        console.print()
+
+    def _cmd_computer(self, args):
+        """Computer use commands."""
+        if not args:
+            Theme.info("🖥️ Computer Use: /computer [screenshot|click <x> <y>|type <text>]")
+            return
+
+        action = args[0].lower()
+
+        if action == "screenshot":
+            Theme.step("Taking screenshot...")
+            result = asyncio.run(self.engine.computer_use_screenshot())
+            if "error" in result:
+                Theme.error(result["error"])
+            else:
+                Theme.success(f"Screenshot saved: {result.get('path', '?')}")
+
+        elif action == "click" and len(args) >= 3:
+            x, y = int(args[1]), int(args[2])
+            result = asyncio.run(self.engine.computer_use_click(x, y))
+            if "error" in result:
+                Theme.error(result["error"])
+            else:
+                Theme.success(f"Clicked at ({x}, {y})")
+
+        elif action == "type" and len(args) >= 2:
+            text = " ".join(args[1:])
+            result = asyncio.run(self.engine.computer_use_type(text))
+            if "error" in result:
+                Theme.error(result["error"])
+            else:
+                Theme.success(f"Typed {result.get('length', 0)} characters")
+
+        else:
+            Theme.warning("Usage: /computer [screenshot|click <x> <y>|type <text>]")
+
+    def _cmd_system(self, args):
+        """System info and updates."""
+        if not args or args[0] == "info":
+            info = self.engine.system_info()
+            if "error" in info:
+                Theme.error(info["error"])
+                return
+            table = Theme.create_table("🔧 System Info")
+            table.add_column("Property", style="cyan")
+            table.add_column("Value", style="neon_green")
+            table.add_row("Platform", f"{info.get('platform', '?')} {info.get('platform_release', '')}")
+            table.add_row("Architecture", info.get("architecture", "?"))
+            table.add_row("CPU Cores", str(info.get("cpu_count", "?")))
+            table.add_row("Hostname", info.get("hostname", "?"))
+            table.add_row("Python", info.get("python_version", "?"))
+            table.add_row("Uptime", info.get("uptime", "?"))
+            table.add_row("Rally Version", info.get("rally_version", "?"))
+            mem = info.get("memory", {})
+            if mem:
+                table.add_row("Memory", f"{mem.get('used_mb', 0):.0f}/{mem.get('total_mb', 0):.0f} MB ({mem.get('percent_used', 0):.1f}%)")
+            disk = info.get("disk", {})
+            if disk:
+                table.add_row("Disk", f"{disk.get('used_gb', 0):.1f}/{disk.get('total_gb', 0):.1f} GB ({disk.get('percent_used', 0):.1f}%)")
+            console.print()
+            console.print(table)
+            console.print()
+
+        elif args[0] == "update":
+            Theme.step("Checking for updates...")
+            result = asyncio.run(self.engine.auto_update())
+            if result.get("update_available"):
+                Theme.info(f"Update available: {result.get('message', '')}")
+            else:
+                Theme.success(result.get("message", "Up to date"))
+
+        else:
+            Theme.warning("Usage: /system [info|update]")

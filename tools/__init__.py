@@ -1,7 +1,10 @@
 """
 🟣 Rally Agent — Tools Package
-Complete tool system with function calling, sandboxing, skills, and browser automation.
+Complete tool system with function calling, sandboxing, skills, browser automation,
+real computer use (desktop control), and system control.
 """
+
+from typing import Optional
 
 from tools.registry import (
     # Core
@@ -39,6 +42,33 @@ from tools.browser import (
     DownloadManager,
 )
 
+from tools.computer_use import (
+    ComputerUseEngine,
+    register_computer_use_tools,
+    # Data types
+    ScreenRegion,
+    UIElement,
+    WindowInfo,
+    MonitorInfo,
+    MouseButton,
+    ScrollDirection,
+)
+
+from tools.system_control import (
+    register_system_control_tools,
+    # Managers (for direct use)
+    ProcessManager,
+    ServiceManager,
+    FileSystemWatcher,
+    NetworkControl,
+    HardwareInfo,
+    PackageManager,
+    EnvironmentManager,
+    ScheduledTasks,
+    PowerManagement,
+    AutoUpdater,
+)
+
 
 def create_tool_registry(config=None) -> ToolRegistry:
     """
@@ -50,20 +80,26 @@ def create_tool_registry(config=None) -> ToolRegistry:
     # Register all skills (30+)
     skill_count = register_all_skills(registry)
 
+    # Register system control tools (10 tools)
+    register_system_control_tools(registry)
+
     return registry
 
 
 def create_full_tool_system(config=None, browser_profile: Optional[BrowserProfile] = None):
     """
-    Create the complete tool system: registry + skills + browser.
-    Returns (registry, browser_engine).
+    Create the complete tool system: registry + skills + browser + computer use.
+    Returns (registry, browser_engine, computer_engine).
     """
     registry = create_tool_registry(config)
 
     # Register browser tools
     browser_engine = register_browser_tools(registry, config=config, profile=browser_profile)
 
-    return registry, browser_engine
+    # Register computer use tools (10 tools)
+    computer_engine = register_computer_use_tools(registry)
+
+    return registry, browser_engine, computer_engine
 
 
 __all__ = [
@@ -95,10 +131,28 @@ __all__ = [
     "NetworkInterceptor",
     "TabManager",
     "DownloadManager",
+    # Computer Use
+    "ComputerUseEngine",
+    "register_computer_use_tools",
+    "ScreenRegion",
+    "UIElement",
+    "WindowInfo",
+    "MonitorInfo",
+    "MouseButton",
+    "ScrollDirection",
+    # System Control
+    "register_system_control_tools",
+    "ProcessManager",
+    "ServiceManager",
+    "FileSystemWatcher",
+    "NetworkControl",
+    "HardwareInfo",
+    "PackageManager",
+    "EnvironmentManager",
+    "ScheduledTasks",
+    "PowerManagement",
+    "AutoUpdater",
     # Factories
     "create_tool_registry",
     "create_full_tool_system",
 ]
-
-# Re-export Optional for type hints used in function signatures
-from typing import Optional

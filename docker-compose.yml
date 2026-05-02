@@ -1,0 +1,115 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# 🟣 RALLY AGENT — Docker Compose
+#
+# Quick start:
+#   docker-compose up -d
+#
+# View logs:
+#   docker-compose logs -f rally
+#
+# Stop:
+#   docker-compose down
+#
+# Full rebuild:
+#   docker-compose build --no-cache && docker-compose up -d
+# ═══════════════════════════════════════════════════════════════════════════════
+
+services:
+  rally:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rally-agent
+    restart: unless-stopped
+    ports:
+      # Web UI & API
+      - "${RALLY_PORT:-8778}:8778"
+    volumes:
+      # Persistent data — survives container rebuilds
+      - rally-data:/data
+      # Mount local config (optional, overrides default)
+      # - ./config:/data/config:ro
+    environment:
+      # ── API Keys (set in .env file or here) ──────────────────────
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+      - SERPAPI_KEY=${SERPAPI_KEY:-}
+
+      # ── Rally Configuration ──────────────────────────────────────
+      - RALLY_HOME=/app
+      - RALLY_DATA=/data
+      - RALLY_PORT=8778
+      - RALLY_LOG_LEVEL=${RALLY_LOG_LEVEL:-info}
+      - RALLY_DEFAULT_MODEL=${RALLY_DEFAULT_MODEL:-auto}
+
+      # ── Security ─────────────────────────────────────────────────
+      - RALLY_SECRET_KEY=${RALLY_SECRET_KEY:-}
+
+      # ── Web UI ───────────────────────────────────────────────────
+      - RALLY_WEB_HOST=0.0.0.0
+      - RALLY_WEB_PORT=8778
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8778/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 15s
+      retries: 3
+      start_interval: 5s
+    # Resource limits (adjust as needed)
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: "2.0"
+        reservations:
+          memory: 512M
+          cpus: "0.5"
+    networks:
+      - rally-net
+
+  # ── Optional: Redis for caching/sessions ───────────────────────────────────
+  # Uncomment if you want Redis support
+  # redis:
+  #   image: redis:7-alpine
+  #   container_name: rally-redis
+  #   restart: unless-stopped
+  #   ports:
+  #     - "6379:6379"
+  #   volumes:
+  #     - redis-data:/data
+  #   command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+  #   healthcheck:
+  #     test: ["CMD", "redis-cli", "ping"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 3
+  #   networks:
+  #     - rally-net
+
+  # ── Optional: ChromaDB for vector memory ───────────────────────────────────
+  # Uncomment if you want persistent vector storage
+  # chroma:
+  #   image: chromadb/chroma:latest
+  #   container_name: rally-chroma
+  #   restart: unless-stopped
+  #   ports:
+  #     - "8000:8000"
+  #   volumes:
+  #     - chroma-data:/chroma/chroma
+  #   environment:
+  #     - IS_PERSISTENT=TRUE
+  #   networks:
+  #     - rally-net
+
+volumes:
+  rally-data:
+    driver: local
+  # redis-data:
+  #   driver: local
+  # chroma-data:
+  #   driver: local
+
+networks:
+  rally-net:
+    driver: bridge

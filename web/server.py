@@ -296,6 +296,13 @@ tr:hover td{background:rgba(139,92,246,0.05)}
       <div class="nav-item" data-page="browser" onclick="showPage('browser')"><span class="icon">🌐</span> Browser</div>
       <div class="nav-item" data-page="plugins" onclick="showPage('plugins')"><span class="icon">🔌</span> Plugins</div>
       <div class="nav-item" data-page="tools" onclick="showPage('tools')"><span class="icon">🛠️</span> Tools</div>
+      <div class="nav-item" data-page="automation" onclick="showPage('automation')"><span class="icon">⏰</span> Automation</div>
+      <div class="nav-item" data-page="knowledge" onclick="showPage('knowledge')"><span class="icon">🕸️</span> Knowledge</div>
+      <div class="nav-item" data-page="workflows" onclick="showPage('workflows')"><span class="icon">🔄</span> Workflows</div>
+      <div class="nav-item" data-page="improvement" onclick="showPage('improvement')"><span class="icon">📈</span> Improvement</div>
+      <div class="nav-item" data-page="computer" onclick="showPage('computer')"><span class="icon">🖥️</span> Computer</div>
+      <div class="nav-item" data-page="system" onclick="showPage('system')"><span class="icon">🔧</span> System</div>
+      <div class="nav-item" data-page="profile" onclick="showPage('profile')"><span class="icon">👤</span> Profile</div>
       <div class="nav-item" data-page="files" onclick="showPage('files')"><span class="icon">📁</span> Files</div>
       <div class="nav-item" data-page="metrics" onclick="showPage('metrics')"><span class="icon">📈</span> Metrics</div>
       <div class="nav-item" data-page="security" onclick="showPage('security')"><span class="icon">🔒</span> Security</div>
@@ -520,6 +527,151 @@ tr:hover td{background:rgba(139,92,246,0.05)}
       <div class="card" style="margin-top:16px">
         <div class="card-header"><span class="card-title">Channels</span></div>
         <div id="channelList"></div>
+      </div>
+    </div>
+
+    <!-- ═══════ AUTOMATION PAGE ═══════ -->
+    <div id="page-automation" class="page">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <h2 style="font-size:1.2rem;color:var(--purple-300)">⏰ Automation / Cron Jobs</h2>
+        <button class="btn btn-primary" onclick="showAddJobModal()">+ Add Job</button>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="card-title">Scheduled Jobs</span></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Name</th><th>Schedule</th><th>Type</th><th>Last Run</th><th>Runs</th><th>Status</th><th>Actions</th></tr></thead>
+            <tbody id="automationJobsBody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="card" style="margin-top:16px">
+        <div class="card-header"><span class="card-title">Run History</span></div>
+        <div id="automationHistory"></div>
+      </div>
+    </div>
+
+    <!-- ═══════ KNOWLEDGE PAGE ═══════ -->
+    <div id="page-knowledge" class="page">
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header"><span class="card-title">🕸️ Knowledge Graph Stats</span></div>
+          <div id="knowledgeStats"></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><span class="card-title">🔍 Search Knowledge</span></div>
+          <div class="input-group">
+            <input id="knowledgeSearchInput" class="input" placeholder="Search entities..." onkeydown="if(event.key==='Enter')searchKnowledge()">
+            <button class="btn btn-primary btn-sm" style="margin-top:8px" onclick="searchKnowledge()">Search</button>
+          </div>
+          <div id="knowledgeSearchResults"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════ WORKFLOWS PAGE ═══════ -->
+    <div id="page-workflows" class="page">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <h2 style="font-size:1.2rem;color:var(--purple-300)">🔄 Workflows</h2>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-primary" onclick="startRecording()">⏺ Record</button>
+          <button class="btn btn-secondary" onclick="stopRecording()">⏹ Stop</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="card-title">Saved Workflows</span></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Name</th><th>Steps</th><th>Created</th><th>Replays</th><th>Actions</th></tr></thead>
+            <tbody id="workflowsBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════ IMPROVEMENT PAGE ═══════ -->
+    <div id="page-improvement" class="page">
+      <h2 style="font-size:1.2rem;color:var(--purple-300);margin-bottom:16px">📈 Self-Improvement</h2>
+      <div class="grid-4" id="improvementStats"></div>
+      <div class="grid-2" style="margin-top:16px">
+        <div class="card">
+          <div class="card-header"><span class="card-title">Top Errors</span></div>
+          <div id="improvementErrors"></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><span class="card-title">Recent Learnings</span></div>
+          <div id="improvementLearnings"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════ COMPUTER USE PAGE ═══════ -->
+    <div id="page-computer" class="page">
+      <h2 style="font-size:1.2rem;color:var(--purple-300);margin-bottom:16px">🖥️ Computer Use</h2>
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header"><span class="card-title">📸 Screenshot</span></div>
+          <button class="btn btn-primary" onclick="takeScreenshot()">Take Screenshot</button>
+          <div id="screenshotPreview" style="margin-top:12px;min-height:200px;background:var(--bg-800);border:1px solid var(--border);border-radius:8px;display:flex;align-items:center;justify-content:center;color:var(--text-muted)">
+            <span>No screenshot yet</span>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><span class="card-title">🖱️ Mouse & Keyboard</span></div>
+          <div class="grid-2">
+            <div class="input-group">
+              <label class="input-label">X Coordinate</label>
+              <input id="clickX" class="input" type="number" placeholder="0">
+            </div>
+            <div class="input-group">
+              <label class="input-label">Y Coordinate</label>
+              <input id="clickY" class="input" type="number" placeholder="0">
+            </div>
+          </div>
+          <button class="btn btn-secondary" onclick="computerClick()" style="margin-bottom:12px">🖱️ Click</button>
+          <div class="input-group">
+            <label class="input-label">Text to Type</label>
+            <input id="typeText" class="input" placeholder="Hello world">
+          </div>
+          <button class="btn btn-secondary" onclick="computerType()">⌨️ Type</button>
+          <div id="computerLog" style="margin-top:12px;font-size:0.82rem;color:var(--text-dim)"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════ SYSTEM PAGE ═══════ -->
+    <div id="page-system" class="page">
+      <h2 style="font-size:1.2rem;color:var(--purple-300);margin-bottom:16px">🔧 System Info</h2>
+      <div class="grid-4" id="systemStats"></div>
+      <div class="card" style="margin-top:16px">
+        <div class="card-header">
+          <span class="card-title">System Details</span>
+          <button class="btn btn-primary btn-sm" onclick="checkUpdates()">🔄 Check Updates</button>
+        </div>
+        <div id="systemDetails" style="font-size:0.85rem;color:var(--text-dim)"></div>
+      </div>
+    </div>
+
+    <!-- ═══════ PROFILE PAGE ═══════ -->
+    <div id="page-profile" class="page">
+      <h2 style="font-size:1.2rem;color:var(--purple-300);margin-bottom:16px">👤 User Profile</h2>
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header"><span class="card-title">Profile Summary</span></div>
+          <div id="profileSummary" style="white-space:pre-wrap;font-size:0.85rem;color:var(--text-dim)"></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><span class="card-title">Edit Profile</span></div>
+          <div class="input-group">
+            <label class="input-label">Name</label>
+            <input id="profileName" class="input" placeholder="Your name">
+          </div>
+          <div class="input-group">
+            <label class="input-label">Timezone</label>
+            <input id="profileTimezone" class="input" placeholder="UTC+8">
+          </div>
+          <button class="btn btn-primary" onclick="saveProfile()">💾 Save Profile</button>
+        </div>
       </div>
     </div>
   </div>
@@ -753,7 +905,9 @@ document.getElementById('chatInput').addEventListener('keydown', function(e) {
 const pageTitles = {
   chat:'💬 Chat', dashboard:'📊 Dashboard', agents:'🤖 Agents', memory:'🧠 Memory',
   browser:'🌐 Browser', plugins:'🔌 Plugins', tools:'🛠️ Tools', files:'📁 Files',
-  metrics:'📈 Metrics', security:'🔒 Security', users:'👥 Users', settings:'⚙️ Settings'
+  metrics:'📈 Metrics', security:'🔒 Security', users:'👥 Users', settings:'⚙️ Settings',
+  automation:'⏰ Automation', knowledge:'🕸️ Knowledge', workflows:'🔄 Workflows',
+  improvement:'📈 Improvement', computer:'🖥️ Computer', system:'🔧 System', profile:'👤 Profile'
 };
 
 function showPage(name) {
@@ -773,6 +927,12 @@ function showPage(name) {
   if (name === 'plugins') loadPlugins();
   if (name === 'settings') loadSettings();
   if (name === 'memory') loadMemory();
+  if (name === 'automation') loadAutomation();
+  if (name === 'knowledge') loadKnowledge();
+  if (name === 'workflows') loadWorkflows();
+  if (name === 'improvement') loadImprovement();
+  if (name === 'system') loadSystem();
+  if (name === 'profile') loadProfile();
 }
 
 function loadAllPages() { loadDashboard(); loadAgents(); }
@@ -1154,6 +1314,241 @@ async function saveConfig() {
     await api('/config', { method: 'POST', body: JSON.stringify({ config }) });
     toast('Config saved!', 'success');
   } catch (e) { toast('Save error: ' + e.message, 'error'); }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ⏰ Automation
+// ═══════════════════════════════════════════════════════════════
+async function loadAutomation() {
+  try {
+    const data = await api('/automation/jobs');
+    document.getElementById('automationJobsBody').innerHTML = (data.jobs || []).map(j => `
+      <tr>
+        <td><strong>${escHtml(j.name)}</strong></td>
+        <td><code>${escHtml(j.schedule)}</code></td>
+        <td><span class="badge badge-purple">${escHtml(j.type)}</span></td>
+        <td style="color:var(--text-dim)">${j.last_run ? new Date(j.last_run).toLocaleString() : 'Never'}</td>
+        <td>${j.run_count || 0}</td>
+        <td><span class="badge ${j.enabled ? 'badge-green' : 'badge-red'}">${j.enabled ? 'Active' : 'Disabled'}</span></td>
+        <td>
+          <button class="btn btn-secondary btn-sm" onclick="runJobNow('${j.id}')">▶ Run</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteJob('${j.id}')">🗑️</button>
+        </td>
+      </tr>
+    `).join('') || '<tr><td colspan="7" style="color:var(--text-dim)">No jobs scheduled.</td></tr>';
+  } catch (e) { console.error('Automation error:', e); }
+  try {
+    const hist = await api('/automation/history');
+    document.getElementById('automationHistory').innerHTML = (hist.history || []).slice(-20).reverse().map(r => `
+      <div class="log-entry">
+        <span class="log-time">${escHtml(r.started_at || '')}</span>
+        <strong>${escHtml(r.job_name)}</strong> — ${r.error ? '❌ ' + escHtml(r.error) : '✅ ' + escHtml((r.result||'').slice(0,100))}
+        <span style="color:var(--text-muted);font-size:0.72rem"> (${(r.duration_ms||0).toFixed(0)}ms)</span>
+      </div>
+    `).join('') || '<p style="color:var(--text-dim)">No history yet.</p>';
+  } catch (e) {}
+}
+
+function showAddJobModal() {
+  showModal('Add Cron Job', `
+    <div class="input-group"><label class="input-label">Job Name</label><input id="jobName" class="input" placeholder="My job"></div>
+    <div class="input-group"><label class="input-label">Schedule (e.g. 5m, 1h, 1d)</label><input id="jobSchedule" class="input" placeholder="1h"></div>
+    <div class="input-group"><label class="input-label">Task / Command</label><input id="jobTask" class="input" placeholder="Check emails"></div>
+    <div class="input-group"><label class="input-label">Type</label>
+      <select id="jobType" class="input"><option value="agent">Agent</option><option value="shell">Shell</option><option value="webhook">Webhook</option></select>
+    </div>
+  `, async () => {
+    try {
+      await api('/automation/jobs', { method: 'POST', body: JSON.stringify({
+        name: document.getElementById('jobName').value,
+        schedule: document.getElementById('jobSchedule').value,
+        task: document.getElementById('jobTask').value,
+        type: document.getElementById('jobType').value,
+      })});
+      toast('Job created!', 'success'); closeModal(); loadAutomation();
+    } catch (e) { toast('Error: ' + e.message, 'error'); }
+  });
+}
+
+async function runJobNow(id) {
+  try { await api('/automation/jobs/' + id + '/run', { method: 'POST', body: '{}' }); toast('Job executed!', 'success'); loadAutomation(); }
+  catch (e) { toast('Error: ' + e.message, 'error'); }
+}
+
+async function deleteJob(id) {
+  if (!confirm('Delete this job?')) return;
+  try { await api('/automation/jobs/' + id, { method: 'DELETE' }); toast('Job deleted', 'success'); loadAutomation(); }
+  catch (e) { toast('Error: ' + e.message, 'error'); }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 🕸️ Knowledge Graph
+// ═══════════════════════════════════════════════════════════════
+async function loadKnowledge() {
+  try {
+    const data = await api('/knowledge');
+    document.getElementById('knowledgeStats').innerHTML = `
+      <p>Entities: <strong>${data.total_entities || 0}</strong></p>
+      <p>Relationships: <strong>${data.total_relationships || 0}</strong></p>
+      <p style="margin-top:8px">Entity types:</p>
+      ${Object.entries(data.entity_types || {}).map(([k,v]) => `<div style="font-size:0.82rem;padding:2px 0"><span class="badge badge-purple">${escHtml(k)}</span> ${v}</div>`).join('')}
+    `;
+  } catch (e) { console.error('Knowledge error:', e); }
+}
+
+async function searchKnowledge() {
+  const q = document.getElementById('knowledgeSearchInput').value.trim();
+  if (!q) return;
+  try {
+    const data = await api('/knowledge/search?q=' + encodeURIComponent(q));
+    document.getElementById('knowledgeSearchResults').innerHTML = (data.results || []).map(r => `
+      <div style="padding:6px 0;border-bottom:1px solid var(--border);font-size:0.82rem">
+        <strong>${escHtml(r.name)}</strong> <span class="badge badge-purple">${escHtml(r.type)}</span>
+        <span style="color:var(--text-muted)">score: ${(r.score||0).toFixed(2)}</span>
+      </div>
+    `).join('') || '<p style="color:var(--text-dim)">No results.</p>';
+  } catch (e) { toast('Search error: ' + e.message, 'error'); }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 🔄 Workflows
+// ═══════════════════════════════════════════════════════════════
+async function loadWorkflows() {
+  try {
+    const data = await api('/workflows');
+    document.getElementById('workflowsBody').innerHTML = (data.workflows || []).map(w => `
+      <tr>
+        <td><strong>${escHtml(w.name)}</strong></td>
+        <td>${w.step_count || 0}</td>
+        <td style="color:var(--text-dim)">${escHtml(w.created_at || '').slice(0,10)}</td>
+        <td>${w.replay_count || 0}</td>
+        <td>
+          <button class="btn btn-secondary btn-sm" onclick="replayWorkflow('${escHtml(w.name)}')">▶ Replay</button>
+        </td>
+      </tr>
+    `).join('') || '<tr><td colspan="5" style="color:var(--text-dim)">No workflows recorded.</td></tr>';
+  } catch (e) { console.error('Workflows error:', e); }
+}
+
+async function startRecording() {
+  const name = prompt('Workflow name:');
+  if (!name) return;
+  try { await api('/workflows/record', { method: 'POST', body: JSON.stringify({ name }) }); toast('Recording started!', 'info'); }
+  catch (e) { toast('Error: ' + e.message, 'error'); }
+}
+
+async function stopRecording() {
+  try { await api('/workflows/record', { method: 'POST', body: JSON.stringify({ stop: true }) }); toast('Recording stopped!', 'success'); loadWorkflows(); }
+  catch (e) { toast('Error: ' + e.message, 'error'); }
+}
+
+async function replayWorkflow(name) {
+  try { await api('/workflows/replay', { method: 'POST', body: JSON.stringify({ name }) }); toast('Workflow replayed!', 'success'); loadWorkflows(); }
+  catch (e) { toast('Error: ' + e.message, 'error'); }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 📈 Improvement
+// ═══════════════════════════════════════════════════════════════
+async function loadImprovement() {
+  try {
+    const data = await api('/improvement');
+    document.getElementById('improvementStats').innerHTML = `
+      <div class="stat-card"><div class="stat-value">${data.total_entries || 0}</div><div class="stat-label">Total Learnings</div></div>
+      <div class="stat-card"><div class="stat-value">${data.total_corrections || 0}</div><div class="stat-label">Corrections</div></div>
+      <div class="stat-card"><div class="stat-value">${data.total_insights || 0}</div><div class="stat-label">Insights</div></div>
+      <div class="stat-card"><div class="stat-value">${data.health_score || 100}%</div><div class="stat-label">Health Score</div></div>
+    `;
+    document.getElementById('improvementErrors').innerHTML = (data.top_errors || []).map(e => `
+      <div style="padding:6px 0;border-bottom:1px solid var(--border);font-size:0.82rem">
+        <span class="badge badge-red">${e.count}x</span> ${escHtml(e.error)}
+      </div>
+    `).join('') || '<p style="color:var(--text-dim)">No errors recorded.</p>';
+    document.getElementById('improvementLearnings').innerHTML = (data.recent_learnings || []).reverse().map(l => `
+      <div class="log-entry">
+        <span class="badge badge-${l.category==='error'?'red':l.category==='correction'?'yellow':'green'}">${escHtml(l.category)}</span>
+        ${escHtml(l.description)}
+        <span class="log-time">${escHtml(l.timestamp||'').slice(0,10)}</span>
+      </div>
+    `).join('') || '<p style="color:var(--text-dim)">No learnings yet.</p>';
+  } catch (e) { console.error('Improvement error:', e); }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 🖥️ Computer Use
+// ═══════════════════════════════════════════════════════════════
+async function takeScreenshot() {
+  try {
+    const data = await api('/computer/screenshot', { method: 'POST', body: '{}' });
+    if (data.image_base64) {
+      document.getElementById('screenshotPreview').innerHTML = `<img src="data:image/png;base64,${data.image_base64}" style="max-width:100%;border-radius:8px">`;
+    } else {
+      document.getElementById('screenshotPreview').innerHTML = `<span style="color:var(--text-dim)">${data.message || 'Screenshot taken'}</span>`;
+    }
+  } catch (e) { toast('Error: ' + e.message, 'error'); }
+}
+
+async function computerClick() {
+  const x = parseInt(document.getElementById('clickX').value) || 0;
+  const y = parseInt(document.getElementById('clickY').value) || 0;
+  try {
+    await api('/computer/click', { method: 'POST', body: JSON.stringify({ x, y }) });
+    document.getElementById('computerLog').innerHTML = `<div class="log-entry">Clicked at (${x}, ${y})</div>`;
+  } catch (e) { toast('Error: ' + e.message, 'error'); }
+}
+
+async function computerType() {
+  const text = document.getElementById('typeText').value;
+  if (!text) return;
+  try {
+    await api('/computer/type', { method: 'POST', body: JSON.stringify({ text }) });
+    document.getElementById('computerLog').innerHTML = `<div class="log-entry">Typed: "${escHtml(text)}"</div>`;
+  } catch (e) { toast('Error: ' + e.message, 'error'); }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 🔧 System
+// ═══════════════════════════════════════════════════════════════
+async function loadSystem() {
+  try {
+    const data = await api('/system/info');
+    document.getElementById('systemStats').innerHTML = `
+      <div class="stat-card"><div class="stat-value">${escHtml(data.platform || '?')}</div><div class="stat-label">Platform</div></div>
+      <div class="stat-card"><div class="stat-value">${data.cpu_count || '?'}</div><div class="stat-label">CPU Cores</div></div>
+      <div class="stat-card"><div class="stat-value">${(data.memory||{}).percent_used || 0}%</div><div class="stat-label">Memory Used</div></div>
+      <div class="stat-card"><div class="stat-value">${(data.disk||{}).free_gb || 0}GB</div><div class="stat-label">Disk Free</div></div>
+    `;
+    document.getElementById('systemDetails').innerHTML = `<pre style="white-space:pre-wrap">${escHtml(JSON.stringify(data, null, 2))}</pre>`;
+  } catch (e) { console.error('System error:', e); }
+}
+
+async function checkUpdates() {
+  try {
+    const data = await api('/system/update', { method: 'POST', body: '{}' });
+    toast(data.message || 'Update check complete', data.update_available ? 'info' : 'success');
+  } catch (e) { toast('Error: ' + e.message, 'error'); }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 👤 Profile
+// ═══════════════════════════════════════════════════════════════
+async function loadProfile() {
+  try {
+    const data = await api('/user/profile');
+    document.getElementById('profileSummary').textContent = data.summary || 'No profile data yet.';
+    if (data.name) document.getElementById('profileName').value = data.name;
+    if (data.timezone) document.getElementById('profileTimezone').value = data.timezone;
+  } catch (e) { console.error('Profile error:', e); }
+}
+
+async function saveProfile() {
+  try {
+    await api('/user/profile', { method: 'POST', body: JSON.stringify({
+      name: document.getElementById('profileName').value,
+      timezone: document.getElementById('profileTimezone').value,
+    })});
+    toast('Profile saved!', 'success');
+  } catch (e) { toast('Error: ' + e.message, 'error'); }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -2112,6 +2507,150 @@ def create_app(engine):
         except Exception:
             pass
         return {"status": "recorded"}
+
+    # ══════════════════════════════════════════════════════════════
+    # ⏰ Automation / Cron Jobs
+    # ══════════════════════════════════════════════════════════════
+
+    @app.get("/api/automation/jobs")
+    async def list_automation_jobs(user: str = Depends(require_auth)):
+        jobs = engine.list_cron_jobs() if hasattr(engine, 'list_cron_jobs') else []
+        return {"jobs": jobs}
+
+    @app.post("/api/automation/jobs")
+    async def create_automation_job(body: dict, user: str = Depends(require_auth)):
+        schedule = body.get("schedule", "1h")
+        task = body.get("task", body.get("name", ""))
+        job_type = body.get("type", "agent")
+        if not task:
+            return JSONResponse({"error": "Task required"}, status_code=400)
+        result = engine.add_cron_job(schedule, task, job_type) if hasattr(engine, 'add_cron_job') else {"error": "Not available"}
+        _log_audit(f"Cron job created: {task[:50]}", user)
+        return result
+
+    @app.delete("/api/automation/jobs/{job_id}")
+    async def delete_automation_job(job_id: str, user: str = Depends(require_auth)):
+        success = engine.remove_cron_job(job_id) if hasattr(engine, 'remove_cron_job') else False
+        if not success:
+            return JSONResponse({"error": "Job not found"}, status_code=404)
+        _log_audit(f"Cron job deleted: {job_id}", user)
+        return {"status": "deleted"}
+
+    @app.post("/api/automation/jobs/{job_id}/run")
+    async def run_automation_job(job_id: str, body: dict = Body({}), user: str = Depends(require_auth)):
+        result = await engine.run_cron_job(job_id) if hasattr(engine, 'run_cron_job') else {"error": "Not available"}
+        _log_audit(f"Cron job run: {job_id}", user)
+        return result
+
+    @app.get("/api/automation/history")
+    async def automation_history(user: str = Depends(require_auth)):
+        history = engine.get_cron_history() if hasattr(engine, 'get_cron_history') else []
+        return {"history": history}
+
+    # ══════════════════════════════════════════════════════════════
+    # 👤 User Profile
+    # ══════════════════════════════════════════════════════════════
+
+    @app.get("/api/user/profile")
+    async def get_user_profile(user: str = Depends(require_auth)):
+        profile = engine.get_user_profile() if hasattr(engine, 'get_user_profile') else {"summary": "No profile available"}
+        return profile
+
+    @app.post("/api/user/profile")
+    async def update_user_profile(body: dict, user: str = Depends(require_auth)):
+        result = engine.update_user_profile(body) if hasattr(engine, 'update_user_profile') else {"error": "Not available"}
+        _log_audit(f"Profile updated", user)
+        return result
+
+    # ══════════════════════════════════════════════════════════════
+    # 🕸️ Knowledge Graph
+    # ══════════════════════════════════════════════════════════════
+
+    @app.get("/api/knowledge")
+    async def knowledge_stats(user: str = Depends(require_auth)):
+        return engine.get_knowledge_graph_stats() if hasattr(engine, 'get_knowledge_graph_stats') else {"total_entities": 0}
+
+    @app.get("/api/knowledge/search")
+    async def knowledge_search(q: str = Query(""), user: str = Depends(require_auth)):
+        if not q:
+            return {"results": []}
+        results = engine.search_knowledge(q) if hasattr(engine, 'search_knowledge') else []
+        return {"results": results}
+
+    # ══════════════════════════════════════════════════════════════
+    # 🔄 Workflows
+    # ══════════════════════════════════════════════════════════════
+
+    @app.get("/api/workflows")
+    async def list_workflows(user: str = Depends(require_auth)):
+        workflows = engine.list_workflows() if hasattr(engine, 'list_workflows') else []
+        return {"workflows": workflows}
+
+    @app.post("/api/workflows/record")
+    async def record_workflow(body: dict, user: str = Depends(require_auth)):
+        if body.get("stop"):
+            result = engine.stop_recording_workflow() if hasattr(engine, 'stop_recording_workflow') else {"error": "Not available"}
+        else:
+            name = body.get("name", "unnamed")
+            result = engine.record_workflow(name) if hasattr(engine, 'record_workflow') else {"error": "Not available"}
+        _log_audit(f"Workflow record: {body.get('name', 'stop')}", user)
+        return result
+
+    @app.post("/api/workflows/replay")
+    async def replay_workflow(body: dict, user: str = Depends(require_auth)):
+        name = body.get("name", "")
+        if not name:
+            return JSONResponse({"error": "Workflow name required"}, status_code=400)
+        result = await engine.replay_workflow(name) if hasattr(engine, 'replay_workflow') else {"error": "Not available"}
+        _log_audit(f"Workflow replay: {name}", user)
+        return result
+
+    # ══════════════════════════════════════════════════════════════
+    # 📈 Self-Improvement
+    # ══════════════════════════════════════════════════════════════
+
+    @app.get("/api/improvement")
+    async def improvement_report(user: str = Depends(require_auth)):
+        return engine.get_improvement_report() if hasattr(engine, 'get_improvement_report') else {"total_entries": 0}
+
+    # ══════════════════════════════════════════════════════════════
+    # 🖥️ Computer Use
+    # ══════════════════════════════════════════════════════════════
+
+    @app.post("/api/computer/screenshot")
+    async def computer_screenshot(body: dict = Body({}), user: str = Depends(require_auth)):
+        result = await engine.computer_use_screenshot() if hasattr(engine, 'computer_use_screenshot') else {"error": "Not available"}
+        _log_audit("Screenshot taken", user)
+        return result
+
+    @app.post("/api/computer/click")
+    async def computer_click(body: dict, user: str = Depends(require_auth)):
+        x = body.get("x", 0)
+        y = body.get("y", 0)
+        result = await engine.computer_use_click(x, y) if hasattr(engine, 'computer_use_click') else {"error": "Not available"}
+        _log_audit(f"Computer click: ({x}, {y})", user)
+        return result
+
+    @app.post("/api/computer/type")
+    async def computer_type(body: dict, user: str = Depends(require_auth)):
+        text = body.get("text", "")
+        result = await engine.computer_use_type(text) if hasattr(engine, 'computer_use_type') else {"error": "Not available"}
+        _log_audit(f"Computer type: {text[:50]}", user)
+        return result
+
+    # ══════════════════════════════════════════════════════════════
+    # 🔧 System Control
+    # ══════════════════════════════════════════════════════════════
+
+    @app.get("/api/system/info")
+    async def system_info(user: str = Depends(require_auth)):
+        return engine.system_info() if hasattr(engine, 'system_info') else {"error": "Not available"}
+
+    @app.post("/api/system/update")
+    async def system_update(body: dict = Body({}), user: str = Depends(require_admin)):
+        result = await engine.auto_update() if hasattr(engine, 'auto_update') else {"error": "Not available"}
+        _log_audit("Update check", user)
+        return result
 
     # ══════════════════════════════════════════════════════════════
     # 🌐 Main UI

@@ -114,6 +114,37 @@ class CommandRouter:
   rally branch switch <name>   Switch branch
   rally branch merge <name>    Merge branch
 
+[#22d3ee]━━━ Automation ━━━[/]
+  rally cron list              List cron jobs
+  rally cron add <sched> <task> Add cron job
+  rally cron remove <id>       Remove cron job
+  rally cron run <id>          Run job now
+
+[#22d3ee]━━━ Profile ━━━[/]
+  rally profile show           Show user profile
+  rally profile reset          Reset profile
+
+[#22d3ee]━━━ Knowledge ━━━[/]
+  rally knowledge stats        Knowledge graph stats
+  rally knowledge search <q>   Search knowledge graph
+
+[#22d3ee]━━━ Workflows ━━━[/]
+  rally workflow list           List workflows
+  rally workflow record <name>  Start recording
+  rally workflow replay <name>  Replay workflow
+
+[#22d3ee]━━━ Self-Improvement ━━━[/]
+  rally improve report         Show improvement report
+
+[#22d3ee]━━━ Computer Use ━━━[/]
+  rally computer screenshot    Take screenshot
+  rally computer click <x> <y> Click at coordinates
+  rally computer type <text>   Type text
+
+[#22d3ee]━━━ System ━━━[/]
+  rally system info            System information
+  rally system update          Check for updates
+
 [#22d3ee]━━━ Management ━━━[/]
   rally config                 Show configuration
   rally config set <k> <v>     Set config value
@@ -207,6 +238,15 @@ class CommandRouter:
             "daemon": lambda a: self.daemon(a),
             "nodes": lambda a: self.manage_nodes(a),
             "marketplace": lambda a: self.marketplace(a),
+
+            # New integrated subsystems
+            "cron": lambda a: self.manage_cron(a),
+            "profile": lambda a: self.manage_profile(a),
+            "knowledge": lambda a: self.manage_knowledge(a),
+            "workflow": lambda a: self.manage_workflow(a),
+            "improve": lambda a: self.manage_improve(a),
+            "computer": lambda a: self.manage_computer(a),
+            "system": lambda a: self.manage_system(a),
         }
 
         handler = handlers.get(domain)
@@ -1287,9 +1327,272 @@ class CommandRouter:
         """Generate shell completions."""
         completions = '''# Rally Agent completions
 _rally_completions() {
-    local commands="chat status config agents memory tools skills help version serve web daemon task node marketplace voice swarm browser sandbox plugins users metrics security rag branch"
+    local commands="chat status config agents memory tools skills help version serve web daemon task node marketplace voice swarm browser sandbox plugins users metrics security rag branch cron profile knowledge workflow improve computer system"
     COMPREPLY=($(compgen -W "$commands" "${COMP_WORDS[1]}"))
 }
 complete -F _rally_completions rally
 '''
         print(completions)
+
+    # ═══════════════════════════════════════════════════════════
+    # New Integrated Subsystems
+    # ═══════════════════════════════════════════════════════════
+
+    def manage_cron(self, args: list[str]):
+        """Manage cron jobs."""
+        self.engine.initialize()
+
+        if not args or args[0] == "list":
+            jobs = self.engine.list_cron_jobs()
+            if not jobs:
+                Theme.info("No cron jobs scheduled. Use: rally cron add <schedule> <task>")
+                return
+            table = Theme.create_table("⏰ Cron Jobs")
+            table.add_column("ID", style="cyan", width=10)
+            table.add_column("Name", style="neon")
+            table.add_column("Schedule", style="green")
+            table.add_column("Type", style="dim")
+            table.add_column("Runs", style="green")
+            table.add_column("Last Run", style="dim")
+            for j in jobs:
+                table.add_row(
+                    j["id"], j["name"], j["schedule"], j.get("type", "agent"),
+                    str(j.get("run_count", 0)),
+                    (j.get("last_run") or "Never")[:16],
+                )
+            console.print()
+            console.print(table)
+            console.print()
+
+        elif args[0] == "add" and len(args) >= 3:
+            schedule = args[1]
+            task = " ".join(args[2:])
+            result = self.engine.add_cron_job(schedule, task)
+            Theme.success(f"Job created: {result.get('name', task[:30])} (schedule: {schedule})")
+
+        elif args[0] == "remove" and len(args) >= 2:
+            success = self.engine.remove_cron_job(args[1])
+            if success:
+                Theme.success(f"Job removed: {args[1]}")
+            else:
+                Theme.error(f"Job not found: {args[1]}")
+
+        elif args[0] == "run" and len(args) >= 2:
+            Theme.step(f"Running job: {args[1]}")
+            result = asyncio.run(self.engine.run_cron_job(args[1]))
+            if "error" in result:
+                Theme.error(result["error"])
+            else:
+                Theme.success(f"Completed in {result.get('duration_ms', 0):.0f}ms")
+                if result.get("result"):
+                    console.print(Theme.panel("result", result["result"][:500]))
+
+        else:
+            Theme.warning("Usage: rally cron [list|add <schedule> <task>|remove <id>|run <id>]")
+
+    def manage_profile(self, args: list[str]):
+        """Manage user profile."""
+        self.engine.initialize()
+
+        if not args or args[0] == "show":
+            profile = self.engine.get_user_profile()
+            if "error" in profile:
+                Theme.error(profile["error"])
+                return
+            console.print()
+            console.print(profile.get("summary", "No profile data"))
+            console.print()
+
+        elif args[0] == "reset":
+            self.engine.update_user_profile({"name": "", "timezone": ""})
+            Theme.success("Profile reset")
+
+        else:
+            Theme.warning("Usage: rally profile [show|reset]")
+
+    def manage_knowledge(self, args: list[str]):
+        """Knowledge graph operations."""
+        self.engine.initialize()
+
+        if not args or args[0] == "stats":
+            stats = self.engine.get_knowledge_graph_stats()
+            if "error" in stats:
+                Theme.error(stats["error"])
+                return
+            table = Theme.create_table("🕸️ Knowledge Graph")
+            table.add_column("Metric", style="cyan")
+            table.add_column("Value", style="neon_green")
+            table.add_row("Entities", str(stats.get("total_entities", 0)))
+            table.add_row("Relationships", str(stats.get("total_relationships", 0)))
+            for t, c in stats.get("entity_types", {}).items():
+                table.add_row(f"  {t}", str(c))
+            console.print()
+            console.print(table)
+            console.print()
+
+        elif args[0] == "search" and len(args) >= 2:
+            query = " ".join(args[1:])
+            results = self.engine.search_knowledge(query)
+            if not results:
+                Theme.info(f"No results for: {query}")
+                return
+            table = Theme.create_table(f"🕸️ Search: '{query}'")
+            table.add_column("Score", style="cyan", width=8)
+            table.add_column("Type", style="purple", width=12)
+            table.add_column("Name", style="neon")
+            for r in results[:10]:
+                table.add_row(f"{r.get('score', 0):.2f}", r.get("type", "?"), r.get("name", "?"))
+            console.print()
+            console.print(table)
+            console.print()
+
+        else:
+            Theme.warning("Usage: rally knowledge [stats|search <query>]")
+
+    def manage_workflow(self, args: list[str]):
+        """Workflow management."""
+        self.engine.initialize()
+
+        if not args or args[0] == "list":
+            workflows = self.engine.list_workflows()
+            if not workflows:
+                Theme.info("No workflows recorded. Use: rally workflow record <name>")
+                return
+            table = Theme.create_table("🔄 Workflows")
+            table.add_column("Name", style="neon")
+            table.add_column("Steps", style="green")
+            table.add_column("Created", style="dim")
+            table.add_column("Replays", style="green")
+            for w in workflows:
+                table.add_row(
+                    w["name"], str(w.get("step_count", 0)),
+                    (w.get("created_at") or "")[:10],
+                    str(w.get("replay_count", 0)),
+                )
+            console.print()
+            console.print(table)
+            console.print()
+
+        elif args[0] == "record" and len(args) >= 2:
+            name = " ".join(args[1:])
+            result = self.engine.record_workflow(name)
+            if "error" in result:
+                Theme.error(result["error"])
+            else:
+                Theme.success(f"Recording: {name}")
+
+        elif args[0] == "replay" and len(args) >= 2:
+            name = " ".join(args[1:])
+            Theme.step(f"Replaying: {name}")
+            result = asyncio.run(self.engine.replay_workflow(name))
+            if "error" in result:
+                Theme.error(result["error"])
+            else:
+                Theme.success(f"Replayed {result.get('total_steps', 0)} steps")
+
+        else:
+            Theme.warning("Usage: rally workflow [list|record <name>|replay <name>]")
+
+    def manage_improve(self, args: list[str]):
+        """Show improvement report."""
+        self.engine.initialize()
+
+        if not args or args[0] == "report":
+            report = self.engine.get_improvement_report()
+            if "error" in report:
+                Theme.error(report["error"])
+                return
+
+            table = Theme.create_table("📈 Self-Improvement Report")
+            table.add_column("Metric", style="cyan")
+            table.add_column("Value", style="neon_green")
+            table.add_row("Total Learnings", str(report.get("total_entries", 0)))
+            table.add_row("Corrections", str(report.get("total_corrections", 0)))
+            table.add_row("Insights", str(report.get("total_insights", 0)))
+            table.add_row("Health Score", f"{report.get('health_score', 100)}%")
+            for cat, cnt in report.get("categories", {}).items():
+                table.add_row(f"  {cat}", str(cnt))
+            console.print()
+            console.print(table)
+            console.print()
+
+        else:
+            Theme.warning("Usage: rally improve [report]")
+
+    def manage_computer(self, args: list[str]):
+        """Computer use commands."""
+        self.engine.initialize()
+
+        if not args:
+            Theme.info("🖥️ Usage: rally computer [screenshot|click <x> <y>|type <text>]")
+            return
+
+        action = args[0].lower()
+
+        if action == "screenshot":
+            Theme.step("Taking screenshot...")
+            result = asyncio.run(self.engine.computer_use_screenshot())
+            if "error" in result:
+                Theme.error(result["error"])
+            else:
+                Theme.success(f"Screenshot: {result.get('path', '?')}")
+
+        elif action == "click" and len(args) >= 3:
+            x, y = int(args[1]), int(args[2])
+            result = asyncio.run(self.engine.computer_use_click(x, y))
+            if "error" in result:
+                Theme.error(result["error"])
+            else:
+                Theme.success(f"Clicked at ({x}, {y})")
+
+        elif action == "type" and len(args) >= 2:
+            text = " ".join(args[1:])
+            result = asyncio.run(self.engine.computer_use_type(text))
+            if "error" in result:
+                Theme.error(result["error"])
+            else:
+                Theme.success(f"Typed {result.get('length', 0)} characters")
+
+        else:
+            Theme.warning("Usage: rally computer [screenshot|click <x> <y>|type <text>]")
+
+    def manage_system(self, args: list[str]):
+        """System info and updates."""
+        self.engine.initialize()
+
+        if not args or args[0] == "info":
+            info = self.engine.system_info()
+            if "error" in info:
+                Theme.error(info["error"])
+                return
+
+            table = Theme.create_table("🔧 System Info")
+            table.add_column("Property", style="cyan")
+            table.add_column("Value", style="neon_green")
+            table.add_row("Platform", f"{info.get('platform', '?')} {info.get('platform_release', '')}")
+            table.add_row("Architecture", info.get("architecture", "?"))
+            table.add_row("CPU Cores", str(info.get("cpu_count", "?")))
+            table.add_row("Hostname", info.get("hostname", "?"))
+            table.add_row("Python", info.get("python_version", "?"))
+            table.add_row("Uptime", info.get("uptime", "?"))
+            table.add_row("Rally Version", info.get("rally_version", "?"))
+            mem = info.get("memory", {})
+            if mem:
+                table.add_row("Memory", f"{mem.get('used_mb', 0):.0f}/{mem.get('total_mb', 0):.0f} MB ({mem.get('percent_used', 0):.1f}%)")
+            disk = info.get("disk", {})
+            if disk:
+                table.add_row("Disk", f"{disk.get('used_gb', 0):.1f}/{disk.get('total_gb', 0):.1f} GB ({disk.get('percent_used', 0):.1f}%)")
+            console.print()
+            console.print(table)
+            console.print()
+
+        elif args[0] == "update":
+            Theme.step("Checking for updates...")
+            result = asyncio.run(self.engine.auto_update())
+            if result.get("update_available"):
+                Theme.info(f"Update available: {result.get('message', '')}")
+            else:
+                Theme.success(result.get("message", "Up to date"))
+
+        else:
+            Theme.warning("Usage: rally system [info|update]")

@@ -73,6 +73,47 @@ from core.multiuser import (
     ROLE_PERMISSIONS,
 )
 
+# Sophisticated User Model
+from core.user_model import (
+    UserModel,
+    PersonalityProfiler,
+    CommunicationStyleAnalyzer,
+    InterestTracker,
+    RoutineDetector,
+    EmotionalDetector,
+    PrivacyController,
+    TraitScore,
+    TopicWeight,
+    Goal,
+    Correction,
+    ProjectContext,
+    EmotionalSnapshot,
+)
+
+# Knowledge Graph
+from core.knowledge_graph import (
+    KnowledgeGraph,
+    EntityExtractor,
+    Entity,
+    Relationship,
+    EntityType,
+    RelationType,
+)
+
+# Workflow Engine
+from core.workflow_engine import (
+    WorkflowEngine,
+    WorkflowRecorder,
+    PatternDetector,
+    Workflow,
+    WorkflowStep,
+    WorkflowTrigger,
+    WorkflowRun,
+    StepType,
+    TriggerType,
+    WorkflowStatus,
+)
+
 __all__ = [
     # Engine
     "TokenCounter",
@@ -128,4 +169,36 @@ __all__ = [
     "UserStore",
     "ROLE_HIERARCHY",
     "ROLE_PERMISSIONS",
+    # User Model
+    "UserModel",
+    "PersonalityProfiler",
+    "CommunicationStyleAnalyzer",
+    "InterestTracker",
+    "RoutineDetector",
+    "EmotionalDetector",
+    "PrivacyController",
+    "TraitScore",
+    "TopicWeight",
+    "Goal",
+    "Correction",
+    "ProjectContext",
+    "EmotionalSnapshot",
+    # Knowledge Graph
+    "KnowledgeGraph",
+    "EntityExtractor",
+    "Entity",
+    "Relationship",
+    "EntityType",
+    "RelationType",
+    # Workflow Engine
+    "WorkflowEngine",
+    "WorkflowRecorder",
+    "PatternDetector",
+    "Workflow",
+    "WorkflowStep",
+    "WorkflowTrigger",
+    "WorkflowRun",
+    "StepType",
+    "TriggerType",
+    "WorkflowStatus",
 ]

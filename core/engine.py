@@ -663,6 +663,15 @@ class RallyEngine:
         self.tools: Any = None
         self.agents: Any = None
 
+        # New integrated subsystems (lazy init)
+        self.automation: Any = None
+        self.user_model: Any = None
+        self.knowledge_graph: Any = None
+        self.workflow_engine: Any = None
+        self.computer_use: Any = None
+        self.system_control: Any = None
+        self.self_improve: Any = None
+
         # State
         self.current_model = config.get("agent.default_model", "auto")
         self.thinking_enabled = config.get("agent.thinking", True)
@@ -695,6 +704,7 @@ class RallyEngine:
         self._init_tools()
         self._init_agents()
         self._init_providers()
+        self._init_new_subsystems()
 
         self.initialized = True
         if _theme:
@@ -733,6 +743,57 @@ class RallyEngine:
             logger.info(f"Providers: {', '.join(available)}")
         else:
             logger.warning("No API keys configured — using local fallback")
+
+    def _init_new_subsystems(self) -> None:
+        """Initialize all new integrated subsystems."""
+        try:
+            from core.automation import AutomationManager
+            self.automation = AutomationManager(self.config)
+            logger.info("Automation scheduler loaded")
+        except Exception as e:
+            logger.warning(f"Automation init failed: {e}")
+
+        try:
+            from core.user_model import UserModel
+            self._user_model = UserModel(self.config)
+            logger.info("User model loaded")
+        except Exception as e:
+            logger.warning(f"User model init failed: {e}")
+
+        try:
+            from core.knowledge_graph import KnowledgeGraph
+            self.knowledge_graph = KnowledgeGraph(self.config)
+            logger.info("Knowledge graph loaded")
+        except Exception as e:
+            logger.warning(f"Knowledge graph init failed: {e}")
+
+        try:
+            from core.workflow_engine import WorkflowEngine
+            self.workflow_engine = WorkflowEngine(self.config)
+            logger.info("Workflow engine loaded")
+        except Exception as e:
+            logger.warning(f"Workflow engine init failed: {e}")
+
+        try:
+            from core.computer_use import ComputerUse
+            self.computer_use = ComputerUse(self.config)
+            logger.info("Computer use loaded")
+        except Exception as e:
+            logger.warning(f"Computer use init failed: {e}")
+
+        try:
+            from core.system_control import SystemControl
+            self.system_control = SystemControl(self.config)
+            logger.info("System control loaded")
+        except Exception as e:
+            logger.warning(f"System control init failed: {e}")
+
+        try:
+            from core.self_improve import SelfImprovementEngine
+            self.self_improve = SelfImprovementEngine(self.config)
+            logger.info("Self-improvement engine loaded")
+        except Exception as e:
+            logger.warning(f"Self-improvement init failed: {e}")
 
     # ── Chat (Non-Streaming) ─────────────────────────────────
 
@@ -1422,6 +1483,153 @@ class RallyEngine:
                 logger.info(f"  {a.get('name', '?')}: {a.get('description', '')}")
         except Exception:
             pass
+
+    # ── Automation / Cron ─────────────────────────────────────
+
+    async def run_cron_job(self, job_id: str, args: dict = None) -> dict:
+        """Run a cron job by ID."""
+        if not self.automation:
+            return {"error": "Automation not initialized"}
+        return await self.automation.run_job(job_id, args)
+
+    def list_cron_jobs(self) -> list[dict]:
+        """List all scheduled cron jobs."""
+        if not self.automation:
+            return []
+        return self.automation.list_jobs()
+
+    def add_cron_job(self, schedule: str, task: str, job_type: str = "agent") -> dict:
+        """Add a new cron job."""
+        if not self.automation:
+            return {"error": "Automation not initialized"}
+        name = task[:50] if task else "unnamed"
+        job = self.automation.add_job(name=name, schedule=schedule, task=task, job_type=job_type)
+        return job.to_dict()
+
+    def remove_cron_job(self, job_id: str) -> bool:
+        """Remove a cron job."""
+        if not self.automation:
+            return False
+        return self.automation.remove_job(job_id)
+
+    def get_cron_history(self, limit: int = 50) -> list[dict]:
+        """Get cron job run history."""
+        if not self.automation:
+            return []
+        return self.automation.get_history(limit)
+
+    # ── User Model ────────────────────────────────────────────
+
+    def get_user_profile(self) -> dict:
+        """Get user model summary."""
+        if not hasattr(self, '_user_model') or not self._user_model:
+            return {"error": "User model not initialized"}
+        return {
+            "summary": self._user_model.get_profile_summary(),
+            "stats": self._user_model.get_stats(),
+            "context_prompt": self._user_model.get_context_prompt(),
+        }
+
+    def update_user_profile(self, data: dict) -> dict:
+        """Update user profile fields."""
+        if not hasattr(self, '_user_model') or not self._user_model:
+            return {"error": "User model not initialized"}
+        if "name" in data:
+            self._user_model.name = data["name"]
+        if "timezone" in data:
+            self._user_model.timezone = data["timezone"]
+        if "language" in data:
+            self._user_model.language = data["language"]
+        self._user_model.save()
+        return {"status": "updated"}
+
+    # ── Knowledge Graph ───────────────────────────────────────
+
+    def get_knowledge_graph_stats(self) -> dict:
+        """Get knowledge graph statistics."""
+        if not self.knowledge_graph:
+            return {"error": "Knowledge graph not initialized"}
+        return self.knowledge_graph.get_stats()
+
+    def search_knowledge(self, query: str, limit: int = 10) -> list[dict]:
+        """Search the knowledge graph."""
+        if not self.knowledge_graph:
+            return []
+        return self.knowledge_graph.search(query, limit)
+
+    # ── Workflow Engine ───────────────────────────────────────
+
+    def record_workflow(self, name: str) -> dict:
+        """Start recording a workflow."""
+        if not self.workflow_engine:
+            return {"error": "Workflow engine not initialized"}
+        return self.workflow_engine.start_recording(name)
+
+    def stop_recording_workflow(self) -> Optional[dict]:
+        """Stop recording and save the workflow."""
+        if not self.workflow_engine:
+            return None
+        return self.workflow_engine.stop_recording()
+
+    async def replay_workflow(self, name: str) -> dict:
+        """Replay a recorded workflow."""
+        if not self.workflow_engine:
+            return {"error": "Workflow engine not initialized"}
+        return await self.workflow_engine.replay_workflow(name, engine=self)
+
+    def list_workflows(self) -> list[dict]:
+        """List all recorded workflows."""
+        if not self.workflow_engine:
+            return []
+        return self.workflow_engine.list_workflows()
+
+    # ── Self-Improvement ──────────────────────────────────────
+
+    def get_improvement_report(self) -> dict:
+        """Get self-improvement report."""
+        if not self.self_improve:
+            return {"error": "Self-improvement engine not initialized"}
+        return self.self_improve.get_report()
+
+    # ── Computer Use ──────────────────────────────────────────
+
+    async def computer_use_screenshot(self) -> dict:
+        """Take a screenshot and analyze."""
+        if not self.computer_use:
+            return {"error": "Computer use not initialized"}
+        return await self.computer_use.screenshot()
+
+    async def computer_use_click(self, x: int, y: int) -> dict:
+        """Click at screen coordinates."""
+        if not self.computer_use:
+            return {"error": "Computer use not initialized"}
+        return await self.computer_use.click(x, y)
+
+    async def computer_use_type(self, text: str) -> dict:
+        """Type text at current cursor position."""
+        if not self.computer_use:
+            return {"error": "Computer use not initialized"}
+        return await self.computer_use.type_text(text)
+
+    # ── System Control ────────────────────────────────────────
+
+    def system_info(self) -> dict:
+        """Get system information."""
+        if not self.system_control:
+            return {"error": "System control not initialized"}
+        return self.system_control.get_system_info()
+
+    async def auto_update(self) -> dict:
+        """Check for and apply updates."""
+        if not self.system_control:
+            return {"error": "System control not initialized"}
+        return await self.system_control.check_for_updates()
+
+    async def apply_update(self) -> dict:
+        """Apply available updates."""
+        if not self.system_control:
+            return {"error": "System control not initialized"}
+        return await self.system_control.apply_update()
 
     # ── Shutdown ─────────────────────────────────────────────
 
