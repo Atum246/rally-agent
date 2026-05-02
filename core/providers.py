@@ -1691,6 +1691,103 @@ class AzureOpenAIProvider(BaseProvider):
             return r.json()["choices"][0]["message"]["content"]
 
 
+class NVIDIAProvider(BaseProvider):
+    name = "nvidia"
+    description = "NVIDIA NIM — Fast inference on NVIDIA GPUs"
+    default_model = "meta/llama-3.1-70b-instruct"
+    supports_function_calling = True
+    max_context_tokens = 128000
+    rpm_limit = 60
+    tpm_limit = 100000
+    models = [
+        "meta/llama-3.1-405b-instruct", "meta/llama-3.1-70b-instruct",
+        "meta/llama-3.1-8b-instruct", "meta/llama-3.3-70b-instruct",
+        "mistralai/mistral-large-latest", "mistralai/mixtral-8x22b-instruct-v0.1",
+        "google/gemma-2-27b-it", "deepseek-ai/deepseek-r1",
+        "nvidia/llama-3.1-nemotron-70b-instruct", "nvidia/nemotron-mini-4b-instruct",
+    ]
+
+    async def chat(self, messages: list[dict], model: str = "", **kwargs: Any) -> str:
+        import httpx
+        model = model or self.default_model
+        await self.rate_limiter.acquire()
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        formatted = [
+            {"role": m.get("role", "user"), "content": m.get("content", "")}
+            for m in messages
+        ]
+        body: dict[str, Any] = {
+            "model": model,
+            "messages": formatted,
+            "max_tokens": kwargs.get("max_tokens", 4096),
+            "temperature": kwargs.get("temperature", 0.7),
+        }
+
+        async def _do() -> str:
+            async with httpx.AsyncClient(timeout=120) as client:
+                r = await client.post(
+                    "https://integrate.api.nvidia.com/v1/chat/completions",
+                    headers=headers,
+                    json=body,
+                )
+                if r.status_code == 429:
+                    raise ConnectionError(f"Rate limited: {r.text}")
+                r.raise_for_status()
+                data = r.json()
+                usage = data.get("usage", {})
+                if usage:
+                    self.rate_limiter.update_actual_tokens(usage.get("total_tokens", 0))
+                return data["choices"][0]["message"]["content"] or ""
+
+        return await self._retry_call(_do, label=f"nvidia({model})")
+
+    async def chat_stream(
+        self, messages: list[dict], model: str = "", **kwargs: Any
+    ) -> AsyncIterator[str]:
+        import httpx
+        model = model or self.default_model
+        await self.rate_limiter.acquire()
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        formatted = [
+            {"role": m.get("role", "user"), "content": m.get("content", "")}
+            for m in messages
+        ]
+        body: dict[str, Any] = {
+            "model": model,
+            "messages": formatted,
+            "max_tokens": kwargs.get("max_tokens", 4096),
+            "temperature": kwargs.get("temperature", 0.7),
+            "stream": True,
+        }
+        async with httpx.AsyncClient(timeout=120) as client:
+            async with client.stream(
+                "POST",
+                "https://integrate.api.nvidia.com/v1/chat/completions",
+                headers=headers,
+                json=body,
+            ) as r:
+                r.raise_for_status()
+                async for line in r.aiter_lines():
+                    if not line.startswith("data: "):
+                        continue
+                    payload = line[6:]
+                    if payload.strip() == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(payload)
+                        text = chunk["choices"][0].get("delta", {}).get("content", "")
+                        if text:
+                            yield text
+                    except (json.JSONDecodeError, KeyError, IndexError):
+                        continue
+
+
 class CustomOpenAIProvider(BaseProvider):
     name = "custom"
     description = "Custom — Any OpenAI-compatible endpoint"
@@ -1758,6 +1855,7 @@ class ProviderManager:
         "replicate": ReplicateProvider,
         "huggingface": HuggingFaceProvider,
         "xai": XAIProvider,
+        "nvidia": NVIDIAProvider,
         "bedrock": AmazonBedrockProvider,
         "azure": AzureOpenAIProvider,
         "custom": CustomOpenAIProvider,
@@ -1798,6 +1896,7 @@ class ProviderManager:
             "replicate": "REPLICATE_API_TOKEN",
             "huggingface": "HUGGINGFACE_API_KEY",
             "xai": "XAI_API_KEY",
+            "nvidia": "NVIDIA_API_KEY",
             "bedrock": "AWS_BEARER_TOKEN",
             "azure": "AZURE_OPENAI_API_KEY",
         }
@@ -1907,9 +2006,9 @@ class ProviderManager:
     async def _auto_chat(self, messages: list[dict], **kwargs: Any) -> str:
         """Auto-select best provider with circuit breaker awareness."""
         fallback_order = self.config.get("engine.fallback_order", [
-            "anthropic", "openai", "google", "groq", "openrouter", "deepseek", "mistral", "together", "fireworks", "ollama",
+            "anthropic", "openai", "google", "groq", "nvidia", "openrouter", "deepseek", "mistral", "together", "fireworks", "ollama",
         ]) if hasattr(self.config, "get") else [
-            "anthropic", "openai", "google", "groq", "openrouter", "deepseek", "mistral", "together", "fireworks", "ollama",
+            "anthropic", "openai", "google", "groq", "nvidia", "openrouter", "deepseek", "mistral", "together", "fireworks", "ollama",
         ]
 
         errors: list[str] = []
@@ -1997,9 +2096,9 @@ class ProviderManager:
     async def _auto_stream(self, messages: list[dict], **kwargs: Any) -> AsyncIterator[str]:
         """Auto-select provider and stream."""
         fallback_order = self.config.get("engine.fallback_order", [
-            "anthropic", "openai", "google", "groq", "openrouter", "deepseek", "mistral", "together", "fireworks", "ollama",
+            "anthropic", "openai", "google", "groq", "nvidia", "openrouter", "deepseek", "mistral", "together", "fireworks", "ollama",
         ]) if hasattr(self.config, "get") else [
-            "anthropic", "openai", "google", "groq", "openrouter", "deepseek", "mistral", "together", "fireworks", "ollama",
+            "anthropic", "openai", "google", "groq", "nvidia", "openrouter", "deepseek", "mistral", "together", "fireworks", "ollama",
         ]
 
         for provider_name in fallback_order:

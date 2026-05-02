@@ -723,7 +723,7 @@ class RallyEngine:
         try:
             from tools.registry import ToolRegistry
             self.tools = ToolRegistry(self.config)
-            count = len(self.tools.get_all()) if self.tools else 0
+            count = len(self.tools.get_all_definitions()) if self.tools else 0
             logger.info(f"Tools: {count} loaded")
         except Exception as e:
             logger.warning(f"Tools init failed: {e}")
@@ -747,8 +747,8 @@ class RallyEngine:
     def _init_new_subsystems(self) -> None:
         """Initialize all new integrated subsystems."""
         try:
-            from core.automation import AutomationManager
-            self.automation = AutomationManager(self.config)
+            from core.automation import JobScheduler
+            self.automation = JobScheduler()
             logger.info("Automation scheduler loaded")
         except Exception as e:
             logger.warning(f"Automation init failed: {e}")
@@ -762,35 +762,35 @@ class RallyEngine:
 
         try:
             from core.knowledge_graph import KnowledgeGraph
-            self.knowledge_graph = KnowledgeGraph(self.config)
+            self.knowledge_graph = KnowledgeGraph()
             logger.info("Knowledge graph loaded")
         except Exception as e:
             logger.warning(f"Knowledge graph init failed: {e}")
 
         try:
             from core.workflow_engine import WorkflowEngine
-            self.workflow_engine = WorkflowEngine(self.config)
+            self.workflow_engine = WorkflowEngine()
             logger.info("Workflow engine loaded")
         except Exception as e:
             logger.warning(f"Workflow engine init failed: {e}")
 
         try:
             from core.computer_use import ComputerUse
-            self.computer_use = ComputerUse(self.config)
+            self.computer_use = ComputerUse()
             logger.info("Computer use loaded")
         except Exception as e:
             logger.warning(f"Computer use init failed: {e}")
 
         try:
             from core.system_control import SystemControl
-            self.system_control = SystemControl(self.config)
+            self.system_control = SystemControl()
             logger.info("System control loaded")
         except Exception as e:
             logger.warning(f"System control init failed: {e}")
 
         try:
             from core.self_improve import SelfImprovementEngine
-            self.self_improve = SelfImprovementEngine(self.config)
+            self.self_improve = SelfImprovementEngine()
             logger.info("Self-improvement engine loaded")
         except Exception as e:
             logger.warning(f"Self-improvement init failed: {e}")
@@ -1319,7 +1319,7 @@ class RallyEngine:
             "Thinking": "ON" if self.thinking_enabled else "OFF",
             "Messages": str(len(self.conversation.messages)),
             "Uptime": uptime_str,
-            "Tools": str(len(self.tools.get_all())) if self.tools else "0",
+            "Tools": str(len(self.tools.get_all_definitions())) if self.tools else "0",
             "Agents": str(len(self.agents.get_all())) if self.agents else "0",
             "Tokens": str(self.token_counter.total_tokens_used),
             "Queue": f"{self.request_queue.stats()['active']}/{self.request_queue.stats()['max_size']}",
@@ -1468,7 +1468,7 @@ class RallyEngine:
         if not self.tools:
             return
         try:
-            tools = self.tools.get_all()
+            tools = self.tools.get_all_definitions()
             for t in tools:
                 logger.info(f"  {t.get('name', '?')}: {t.get('description', '')}")
         except Exception:

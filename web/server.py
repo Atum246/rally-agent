@@ -268,6 +268,64 @@ tr:hover td{background:rgba(139,92,246,0.05)}
 </head>
 <body>
 
+<!-- ONBOARDING WIZARD -->
+<div id="onboardingPage" style="display:none">
+<style>
+.onboarding-overlay{position:fixed;inset:0;background:radial-gradient(ellipse at center,var(--bg-700) 0%,var(--bg-900) 70%);z-index:5000;display:flex;align-items:center;justify-content:center;overflow-y:auto}
+.onboarding-card{background:var(--bg-700);border:1px solid var(--border);border-radius:24px;padding:0;max-width:640px;width:94%;max-height:90vh;overflow-y:auto;box-shadow:var(--purple-glow)}
+.onboarding-header{text-align:center;padding:32px 32px 16px;background:linear-gradient(135deg,rgba(139,92,246,0.15),rgba(6,182,212,0.08));border-radius:24px 24px 0 0}
+.onboarding-header h1{font-size:2rem;color:var(--purple-300);margin-bottom:8px}
+.onboarding-header p{color:var(--text-dim);font-size:0.92rem}
+.onboarding-body{padding:24px 32px 32px}
+.onboarding-steps{display:flex;justify-content:center;gap:8px;margin-bottom:24px}
+.onboarding-dot{width:10px;height:10px;border-radius:50%;background:var(--bg-500);transition:all .3s}
+.onboarding-dot.active{background:var(--purple-500);box-shadow:0 0 8px rgba(139,92,246,0.5);transform:scale(1.2)}
+.onboarding-dot.done{background:var(--green-500)}
+.ob-section{margin-bottom:20px}
+.ob-section h3{color:var(--purple-300);font-size:1.1rem;margin-bottom:12px}
+.ob-provider-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+.ob-provider{background:var(--bg-800);border:2px solid var(--border);border-radius:12px;padding:14px;cursor:pointer;transition:all .2s;display:flex;align-items:center;gap:12px}
+.ob-provider:hover{border-color:var(--purple-600);transform:translateY(-2px)}
+.ob-provider.selected{border-color:var(--purple-500);background:rgba(139,92,246,0.1);box-shadow:var(--purple-glow)}
+.ob-provider .icon{font-size:1.6rem}
+.ob-provider .name{font-weight:600;color:var(--text);font-size:0.92rem}
+.ob-provider .desc{font-size:0.75rem;color:var(--text-dim);margin-top:2px}
+.ob-provider .key-badge{font-size:0.68rem;padding:2px 6px;border-radius:4px;margin-left:auto}
+.ob-provider .key-badge.needs-key{background:rgba(234,179,8,0.15);color:var(--yellow-500)}
+.ob-provider .key-badge.no-key{background:rgba(16,185,129,0.15);color:var(--green-400)}
+.ob-guide-box{background:var(--bg-800);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:16px;font-size:0.85rem;line-height:1.8;white-space:pre-wrap;color:var(--text-dim)}
+.ob-guide-box a{color:var(--purple-400)}
+.ob-model-list{display:flex;flex-wrap:wrap;gap:8px}
+.ob-model{padding:8px 14px;background:var(--bg-800);border:2px solid var(--border);border-radius:10px;cursor:pointer;transition:all .15s;font-size:0.82rem;color:var(--text-dim)}
+.ob-model:hover{border-color:var(--purple-600);color:var(--text)}
+.ob-model.selected{border-color:var(--purple-500);color:var(--purple-300);background:rgba(139,92,246,0.1)}
+.ob-model.default::after{content:' ⭐';font-size:0.7rem}
+.ob-actions{display:flex;justify-content:space-between;align-items:center;margin-top:24px}
+.ob-success{text-align:center;padding:32px}
+.ob-success .checkmark{font-size:4rem;margin-bottom:16px}
+.ob-success h2{color:var(--green-400);margin-bottom:8px}
+.ob-success p{color:var(--text-dim);font-size:0.92rem}
+@media(max-width:600px){.ob-provider-grid{grid-template-columns:1fr}.onboarding-card{width:98%;border-radius:16px}.onboarding-body{padding:16px}}
+</style>
+<div class="onboarding-overlay">
+<div class="onboarding-card">
+<div class="onboarding-header">
+  <h1>⚡ Rally Agent</h1>
+  <p>Set up your AI platform in under 2 minutes</p>
+</div>
+<div class="onboarding-body">
+  <div class="onboarding-steps" id="obSteps"></div>
+  <div id="obContent"></div>
+  <div class="ob-actions">
+    <button class="btn btn-secondary" id="obBack" onclick="obPrev()" style="display:none">← Back</button>
+    <div></div>
+    <button class="btn btn-primary" id="obNext" onclick="obNext()">Next →</button>
+  </div>
+</div>
+</div>
+</div>
+</div>
+
 <!-- LOGIN PAGE -->
 <div id="loginPage" class="login-container">
   <div class="login-box">
@@ -1896,6 +1954,43 @@ def create_app(engine):
         _log_audit(f"User registered: {username}")
         _record_request("auth/register", (time.time()-t0)*1000)
         return {"token": token, "user": {"username": username, "role": role}}
+
+    # ══════════════════════════════════════════════════════════════
+    # 🧙 Setup / Onboarding
+    # ══════════════════════════════════════════════════════════════
+
+    @app.get("/api/setup/status")
+    async def setup_status():
+        """Check if this is a first-run (no providers configured)."""
+        from core.onboarding import SetupWizard
+        wizard = SetupWizard(getattr(engine, 'config', {}))
+        data = await wizard.run_web()
+        return data
+
+    @app.post("/api/setup/complete")
+    async def setup_complete(body: dict):
+        """Save onboarding data from the web UI."""
+        from core.onboarding import SetupWizard
+        wizard = SetupWizard(getattr(engine, 'config', {}))
+        result = await wizard.complete_web_setup(body)
+        if result.get("status") == "error":
+            return JSONResponse(result, status_code=400)
+        _log_audit("Setup wizard completed via web")
+        return result
+
+    @app.get("/api/setup/guides")
+    async def setup_guides():
+        """Get all provider setup guides."""
+        from core.onboarding import SetupWizard
+        wizard = SetupWizard(getattr(engine, 'config', {}))
+        return {"guides": wizard.get_all_provider_guides()}
+
+    @app.get("/api/setup/guide/{provider_name}")
+    async def setup_guide(provider_name: str):
+        """Get setup guide for a specific provider."""
+        from core.onboarding import SetupWizard
+        wizard = SetupWizard(getattr(engine, 'config', {}))
+        return wizard.get_provider_setup_guide(provider_name)
 
     # ══════════════════════════════════════════════════════════════
     # 📊 Status & Config

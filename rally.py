@@ -41,12 +41,24 @@ def main():
     """Main entry point for Rally Agent v2.0"""
     from core.config import RallyConfig
     from core.engine import RallyEngine
+    from core.onboarding import SetupWizard
 
     config = RallyConfig.load()
     engine = RallyEngine(config)
     setup_signal_handlers(engine)
 
     args = sys.argv[1:]
+
+    # ── First-Run Onboarding ──────────────────────────────────
+    wizard = SetupWizard(config)
+    if wizard.is_first_run() and not args:
+        from cli.banner import show_banner
+        show_banner()
+        asyncio.run(wizard.run_interactive())
+        # After wizard, reload config and continue to interactive mode
+        config = RallyConfig.load() if hasattr(RallyConfig, 'load') else config
+        engine = RallyEngine(config)
+        setup_signal_handlers(engine)
 
     # No args → interactive mode
     if not args:

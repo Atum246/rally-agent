@@ -627,7 +627,12 @@ class MemoryStore:
         self._bm25_dirty = True
 
         # Encryption
-        self._encryptor = _SimpleEncryptor(encryption_key) if encryption_key or self._enable_encryption else None
+        if encryption_key:
+            self._encryptor = _SimpleEncryptor(encryption_key)
+        elif self._enable_encryption:
+            self._encryptor = _SimpleEncryptor()  # use default key
+        else:
+            self._encryptor = None
 
         # Stats
         self._stats = MemoryStats()
