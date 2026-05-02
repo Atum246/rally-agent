@@ -1,921 +1,1549 @@
 """
-🟣 Rally Agent — Massive Skills & Tools Registry
-Hundreds of built-in skills and tools. Everything you need.
+🟣 Rally Agent — Skills Registry
+30+ production skills with proper function calling schemas, input validation, error handling.
+Each skill is a BaseTool subclass registered through the ToolRegistry.
 """
 
-import os
-import json
+from __future__ import annotations
+
 import asyncio
-import subprocess
-import re
-import hashlib
 import base64
-import time
-import math
-import random
 import csv
+import hashlib
 import io
-from typing import Optional, Any
+import json
+import math
+import os
+import random
+import re
+import shutil
+import string
+import subprocess
+import time
+import uuid
 from datetime import datetime, timedelta
-from abc import ABC, abstractmethod
+from typing import Any, Optional
 
-from cli.theme import Theme
-
-
-class Skill(ABC):
-    """Base class for skills"""
-    name: str = ""
-    description: str = ""
-    category: str = "general"
-    commands: dict = {}
-
-    @abstractmethod
-    async def execute(self, command: str, args: str, **kwargs) -> str:
-        pass
-
-    def to_dict(self) -> dict:
-        return {"name": self.name, "description": self.description, "category": self.category, "commands": list(self.commands.keys())}
+from tools.registry import (
+    BaseTool,
+    ToolCategory,
+    ToolDefinition,
+    ToolParameter,
+    PermissionLevel,
+    ToolRegistry,
+)
 
 
 # ═══════════════════════════════════════════════════════════════
-# 🔧 FILE & SYSTEM SKILLS
+# Helper
 # ═══════════════════════════════════════════════════════════════
 
-class FileOperationsSkill(Skill):
-    name = "file_ops"
-    description = "Advanced file operations — read, write, edit, search, compress, compare"
-    category = "files"
-    commands = {"read": "Read file", "write": "Write file", "edit": "Edit file", "ls": "List dir", "find": "Find files", "grep": "Search in files", "diff": "Compare files", "head": "First lines", "tail": "Last lines", "wc": "Word count", "cp": "Copy", "mv": "Move", "mkdir": "Make dir", "touch": "Create file", "stat": "File info"}
-
-    async def execute(self, command: str, args: str, **kwargs) -> str:
-        if command == "read":
-            return self._read(args)
-        elif command == "write":
-            parts = args.split(" ", 1)
-            return self._write(parts[0], parts[1] if len(parts) > 1 else "")
-        elif command == "ls":
-            return self._ls(args or ".")
-        elif command == "find":
-            return self._find(args)
-        elif command == "grep":
-            return self._grep(args)
-        elif command == "diff":
-            return self._diff(args)
-        elif command == "head":
-            return self._head(args)
-        elif command == "tail":
-            return self._tail(args)
-        elif command == "wc":
-            return self._wc(args)
-        elif command == "stat":
-            return self._stat(args)
-        return f"Unknown command: {command}"
-
-    def _read(self, path: str) -> str:
-        try:
-            with open(path) as f:
-                return f.read(50000)
-        except Exception as e:
-            return f"Error: {e}"
-
-    def _write(self, path: str, content: str) -> str:
-        try:
-            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-            with open(path, "w") as f:
-                f.write(content)
-            return f"Written to {path}"
-        except Exception as e:
-            return f"Error: {e}"
-
-    def _ls(self, path: str) -> str:
-        try:
-            entries = []
-            for e in sorted(os.listdir(path)):
-                full = os.path.join(path, e)
-                if os.path.isdir(full):
-                    entries.append(f"📁 {e}/")
-                else:
-                    size = os.path.getsize(full)
-                    for unit in ["B", "KB", "MB"]:
-                        if size < 1024:
-                            entries.append(f"📄 {e} ({size:.1f}{unit})")
-                            break
-                        size /= 1024
-            return "\n".join(entries) or "Empty"
-        except Exception as e:
-            return f"Error: {e}"
-
-    def _find(self, args: str) -> str:
-        try:
-            result = subprocess.run(f"find {args}", shell=True, capture_output=True, text=True, timeout=10)
-            return result.stdout[:5000] or "No results"
-        except Exception as e:
-            return f"Error: {e}"
-
-    def _grep(self, args: str) -> str:
-        try:
-            result = subprocess.run(f"grep -r {args}", shell=True, capture_output=True, text=True, timeout=10)
-            return result.stdout[:5000] or "No matches"
-        except Exception as e:
-            return f"Error: {e}"
-
-    def _diff(self, args: str) -> str:
-        try:
-            result = subprocess.run(f"diff {args}", shell=True, capture_output=True, text=True, timeout=10)
-            return result.stdout[:5000] or "Files are identical"
-        except Exception as e:
-            return f"Error: {e}"
-
-    def _head(self, args: str) -> str:
-        try:
-            result = subprocess.run(f"head {args}", shell=True, capture_output=True, text=True, timeout=10)
-            return result.stdout
-        except Exception as e:
-            return f"Error: {e}"
-
-    def _tail(self, args: str) -> str:
-        try:
-            result = subprocess.run(f"tail {args}", shell=True, capture_output=True, text=True, timeout=10)
-            return result.stdout
-        except Exception as e:
-            return f"Error: {e}"
-
-    def _wc(self, args: str) -> str:
-        try:
-            result = subprocess.run(f"wc {args}", shell=True, capture_output=True, text=True, timeout=10)
-            return result.stdout
-        except Exception as e:
-            return f"Error: {e}"
-
-    def _stat(self, path: str) -> str:
-        try:
-            stat = os.stat(path)
-            return f"Size: {stat.st_size} bytes\nModified: {datetime.fromtimestamp(stat.st_mtime)}\nCreated: {datetime.fromtimestamp(stat.st_ctime)}"
-        except Exception as e:
-            return f"Error: {e}"
+def _run_cmd(cmd: str, timeout: int = 30) -> dict[str, Any]:
+    """Run a shell command synchronously and return structured output."""
+    try:
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
+        return {"exit_code": result.returncode, "stdout": result.stdout, "stderr": result.stderr}
+    except subprocess.TimeoutExpired:
+        return {"exit_code": -1, "stdout": "", "stderr": f"Command timed out ({timeout}s)"}
+    except Exception as e:
+        return {"exit_code": -1, "stdout": "", "stderr": str(e)}
 
 
-class SystemInfoSkill(Skill):
-    name = "system"
-    description = "System information — CPU, memory, disk, network, processes"
-    category = "system"
-    commands = {"info": "System info", "cpu": "CPU usage", "mem": "Memory", "disk": "Disk usage", "net": "Network", "ps": "Processes", "env": "Env vars", "uptime": "Uptime", "hostname": "Hostname", "arch": "Architecture"}
+async def _run_cmd_async(cmd: str, timeout: int = 30) -> dict[str, Any]:
+    """Run a shell command asynchronously."""
+    try:
+        proc = await asyncio.create_subprocess_shell(
+            cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        return {
+            "exit_code": proc.returncode,
+            "stdout": stdout.decode("utf-8", errors="replace"),
+            "stderr": stderr.decode("utf-8", errors="replace"),
+        }
+    except asyncio.TimeoutError:
+        return {"exit_code": -1, "stdout": "", "stderr": f"Timed out ({timeout}s)"}
+    except Exception as e:
+        return {"exit_code": -1, "stdout": "", "stderr": str(e)}
 
-    async def execute(self, command: str, args: str, **kwargs) -> str:
+
+# ═══════════════════════════════════════════════════════════════
+# SYSTEM SKILLS
+# ═══════════════════════════════════════════════════════════════
+
+class SystemInfoSkill(BaseTool):
+    def definition(self) -> ToolDefinition:
+        return ToolDefinition(
+            name="system_info",
+            description="Get system information: OS, CPU, memory, disk, network, processes.",
+            category=ToolCategory.SYSTEM,
+            parameters=[
+                ToolParameter("query", "string", "What to query",
+                    enum=["os", "cpu", "memory", "disk", "network", "processes", "uptime", "hostname", "all"], required=True),
+            ],
+            tags=["system", "info", "monitor"],
+        )
+
+    async def execute(self, arguments: dict[str, Any], context: Optional[dict[str, Any]] = None) -> str:
+        query = arguments["query"]
         cmds = {
-            "info": "uname -a",
+            "os": "uname -a",
             "cpu": "top -bn1 | head -5",
-            "mem": "free -h",
+            "memory": "free -h",
             "disk": "df -h",
-            "net": "ip addr show 2>/dev/null || ifconfig",
-            "ps": "ps aux --sort=-%mem | head -20",
-            "env": "env | head -30",
+            "network": "ip addr show 2>/dev/null || ifconfig",
+            "processes": "ps aux --sort=-%mem | head -20",
             "uptime": "uptime",
             "hostname": "hostname",
-            "arch": "uname -m",
         }
-        cmd = cmds.get(command)
+
+        if query == "all":
+            results = {}
+            for key, cmd in cmds.items():
+                results[key] = _run_cmd(cmd, timeout=5)
+            return json.dumps(results, indent=2)
+
+        cmd = cmds.get(query)
         if cmd:
-            try:
-                result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=10)
-                return result.stdout[:5000]
-            except Exception as e:
-                return f"Error: {e}"
-        return f"Unknown command: {command}"
+            return json.dumps(_run_cmd(cmd, timeout=10))
+        return json.dumps({"error": f"Unknown query: {query}"})
 
 
-class GitSkill(Skill):
-    name = "git"
-    description = "Git operations — status, log, diff, commit, branch, push"
-    category = "dev"
-    commands = {"status": "Git status", "log": "Git log", "diff": "Git diff", "branch": "List branches", "commit": "Commit", "push": "Push", "pull": "Pull", "stash": "Stash", "clone": "Clone repo"}
+class GitSkill(BaseTool):
+    def definition(self) -> ToolDefinition:
+        return ToolDefinition(
+            name="git",
+            description="Execute Git operations: status, log, diff, branch, commit, push, pull, clone, stash.",
+            category=ToolCategory.DEVOPS,
+            parameters=[
+                ToolParameter("command", "string", "Git subcommand", required=True,
+                    enum=["status", "log", "diff", "branch", "commit", "push", "pull", "clone", "stash", "checkout", "merge", "remote"]),
+                ToolParameter("args", "string", "Additional arguments for the git command"),
+                ToolParameter("repo_path", "string", "Path to the repository"),
+            ],
+            tags=["git", "version-control", "dev"],
+        )
 
-    async def execute(self, command: str, args: str, **kwargs) -> str:
-        cmd = f"git {command} {args}"
+    async def execute(self, arguments: dict[str, Any], context: Optional[dict[str, Any]] = None) -> str:
+        command = arguments["command"]
+        args = arguments.get("args", "")
+        repo = arguments.get("repo_path", ".")
+
+        # Sanitize: prevent command injection via git args
+        if any(c in args for c in [";", "|", "&", "$", "`", "\n"]):
+            return json.dumps({"error": "Invalid characters in arguments"})
+
+        cmd = f"git -C {repo} {command} {args}".strip()
+        result = _run_cmd(cmd, timeout=30)
+        # Truncate output
+        result["stdout"] = result["stdout"][:10000]
+        return json.dumps(result)
+
+
+class DockerSkill(BaseTool):
+    def definition(self) -> ToolDefinition:
+        return ToolDefinition(
+            name="docker",
+            description="Manage Docker containers and images: ps, images, build, run, logs, stop, rm, exec, compose.",
+            category=ToolCategory.DEVOPS,
+            parameters=[
+                ToolParameter("command", "string", "Docker subcommand", required=True,
+                    enum=["ps", "images", "build", "run", "logs", "stop", "rm", "exec", "pull", "push",
+                          "inspect", "stats", "compose_up", "compose_down", "compose_ps"]),
+                ToolParameter("args", "string", "Additional arguments"),
+                ToolParameter("compose_file", "string", "Path to docker-compose file"),
+            ],
+            permission=PermissionLevel.AUTHENTICATED,
+            rate_limit_per_minute=30,
+            tags=["docker", "container", "devops"],
+        )
+
+    async def execute(self, arguments: dict[str, Any], context: Optional[dict[str, Any]] = None) -> str:
+        command = arguments["command"]
+        args = arguments.get("args", "")
+        compose_file = arguments.get("compose_file", "docker-compose.yml")
+
+        compose_cmds = {"compose_up", "compose_down", "compose_ps"}
+        if command in compose_cmds:
+            sub = command.replace("compose_", "")
+            cmd = f"docker compose -f {compose_file} {sub} {args}"
+        else:
+            cmd = f"docker {command} {args}"
+
+        result = await _run_cmd_async(cmd, timeout=120)
+        result["stdout"] = result["stdout"][:10000]
+        return json.dumps(result)
+
+
+class KubernetesSkill(BaseTool):
+    def definition(self) -> ToolDefinition:
+        return ToolDefinition(
+            name="kubernetes",
+            description="Manage Kubernetes resources: get, describe, logs, apply, delete, scale, port-forward.",
+            category=ToolCategory.DEVOPS,
+            parameters=[
+                ToolParameter("command", "string", "kubectl subcommand", required=True,
+                    enum=["get", "describe", "logs", "apply", "delete", "scale", "port-forward",
+                          "exec", "top", "config", "context"]),
+                ToolParameter("args", "string", "Additional arguments (e.g. 'pods -n default')"),
+                ToolParameter("namespace", "string", "Kubernetes namespace"),
+                ToolParameter("kubeconfig", "string", "Path to kubeconfig file"),
+            ],
+            permission=PermissionLevel.AUTHENTICATED,
+            rate_limit_per_minute=30,
+            tags=["kubernetes", "k8s", "devops", "orchestration"],
+        )
+
+    async def execute(self, arguments: dict[str, Any], context: Optional[dict[str, Any]] = None) -> str:
+        command = arguments["command"]
+        args = arguments.get("args", "")
+        namespace = arguments.get("namespace")
+        kubeconfig = arguments.get("kubeconfig")
+
+        cmd_parts = ["kubectl"]
+        if kubeconfig:
+            cmd_parts.extend(["--kubeconfig", kubeconfig])
+        if namespace and command not in ("config", "context"):
+            cmd_parts.extend(["-n", namespace])
+        cmd_parts.append(command)
+        if args:
+            cmd_parts.append(args)
+
+        cmd = " ".join(cmd_parts)
+        result = await _run_cmd_async(cmd, timeout=60)
+        result["stdout"] = result["stdout"][:15000]
+        return json.dumps(result)
+
+
+class PackageManagerSkill(BaseTool):
+    def definition(self) -> ToolDefinition:
+        return ToolDefinition(
+            name="package_manager",
+            description="Manage system/language packages: pip, npm, apt, brew, cargo, go.",
+            category=ToolCategory.SYSTEM,
+            parameters=[
+                ToolParameter("manager", "string", "Package manager", required=True,
+                    enum=["pip", "npm", "apt", "brew", "cargo", "go"]),
+                ToolParameter("command", "string", "Command (install, uninstall, list, update, etc.)", required=True),
+                ToolParameter("packages", "string", "Space-separated package names"),
+                ToolParameter("sudo", "boolean", "Use sudo (for apt)"),
+            ],
+            permission=PermissionLevel.AUTHENTICATED,
+            rate_limit_per_minute=10,
+            tags=["packages", "install", "system"],
+        )
+
+    async def execute(self, arguments: dict[str, Any], context: Optional[dict[str, Any]] = None) -> str:
+        manager = arguments["manager"]
+        command = arguments["command"]
+        packages = arguments.get("packages", "")
+        use_sudo = arguments.get("sudo", False)
+
+        prefix = "sudo " if use_sudo and manager == "apt" else ""
+        cmd = f"{prefix}{manager} {command} {packages}".strip()
+        result = await _run_cmd_async(cmd, timeout=120)
+        result["stdout"] = result["stdout"][:10000]
+        return json.dumps(result)
+
+
+# ═══════════════════════════════════════════════════════════════
+# DATABASE SKILLS
+# ═══════════════════════════════════════════════════════════════
+
+class SQLiteSkill(BaseTool):
+    def definition(self) -> ToolDefinition:
+        return ToolDefinition(
+            name="sqlite",
+            description="Query and manage SQLite databases: execute SQL, list tables, show schema, dump data.",
+            category=ToolCategory.DATABASE,
+            parameters=[
+                ToolParameter("db_path", "string", "Path to SQLite database file", required=True),
+                ToolParameter("action", "string", "Action to perform",
+                    enum=["query", "tables", "schema", "dump", "execute"], required=True),
+                ToolParameter("sql", "string", "SQL query or statement"),
+                ToolParameter("table", "string", "Table name (for schema/dump)"),
+            ],
+            permission=PermissionLevel.AUTHENTICATED,
+            tags=["sqlite", "database", "sql", "query"],
+        )
+
+    async def execute(self, arguments: dict[str, Any], context: Optional[dict[str, Any]] = None) -> str:
+        import sqlite3
+
+        db_path = arguments["db_path"]
+        action = arguments["action"]
+        sql = arguments.get("sql", "")
+        table = arguments.get("table", "")
+
+        if not os.path.exists(db_path):
+            return json.dumps({"error": f"Database not found: {db_path}"})
+
         try:
-            result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
-            return (result.stdout + result.stderr)[:5000]
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+
+            if action == "tables":
+                rows = conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").fetchall()
+                return json.dumps({"tables": [r["name"] for r in rows]})
+
+            elif action == "schema":
+                target = table or "ALL"
+                if target == "ALL":
+                    rows = conn.execute("SELECT sql FROM sqlite_master WHERE sql IS NOT NULL").fetchall()
+                    return json.dumps({"schema": [r["sql"] for r in rows]})
+                else:
+                    row = conn.execute("SELECT sql FROM sqlite_master WHERE name=?", (table,)).fetchone()
+                    return json.dumps({"table": table, "schema": row["sql"] if row else None})
+
+            elif action == "query":
+                if not sql:
+                    return json.dumps({"error": "SQL query required"})
+                rows = conn.execute(sql).fetchall()
+                result = [dict(r) for r in rows[:500]]
+                return json.dumps({"rows": result, "count": len(result)})
+
+            elif action == "execute":
+                if not sql:
+                    return json.dumps({"error": "SQL statement required"})
+                conn.execute(sql)
+                conn.commit()
+                return json.dumps({"success": True, "message": "Statement executed"})
+
+            elif action == "dump":
+                target = table or "ALL"
+                if target == "ALL":
+                    dump = "\n".join(conn.iterdump())
+                else:
+                    dump = "\n".join(
+                        line for line in conn.iterdump()
+                        if line.startswith(f"CREATE TABLE {table}") or
+                           line.startswith(f"INSERT INTO {table}")
+                    )
+                return json.dumps({"dump": dump[:50000]})
+
+            conn.close()
         except Exception as e:
-            return f"Error: {e}"
+            return json.dumps({"error": str(e)})
+        return json.dumps({"error": f"Unknown action: {action}"})
 
 
-class DockerSkill(Skill):
-    name = "docker"
-    description = "Docker operations — ps, images, build, run, logs"
-    category = "devops"
-    commands = {"ps": "List containers", "images": "List images", "build": "Build image", "run": "Run container", "logs": "View logs", "stop": "Stop container", "rm": "Remove container"}
+class PostgresSkill(BaseTool):
+    def definition(self) -> ToolDefinition:
+        return ToolDefinition(
+            name="postgres",
+            description="Query PostgreSQL via psql CLI. Requires connection string or env vars.",
+            category=ToolCategory.DATABASE,
+            parameters=[
+                ToolParameter("sql", "string", "SQL query to execute", required=True),
+                ToolParameter("connection_string", "string", "PostgreSQL connection string (postgresql://user:pass@host/db)"),
+                ToolParameter("database", "string", "Database name"),
+                ToolParameter("format", "string", "Output format", enum=["table", "csv", "json"]),
+            ],
+            permission=PermissionLevel.AUTHENTICATED,
+            tags=["postgres", "postgresql", "database", "sql"],
+        )
 
-    async def execute(self, command: str, args: str, **kwargs) -> str:
-        cmd = f"docker {command} {args}"
+    async def execute(self, arguments: dict[str, Any], context: Optional[dict[str, Any]] = None) -> str:
+        sql = arguments["sql"]
+        conn_str = arguments.get("connection_string", "")
+        database = arguments.get("database", "")
+        fmt = arguments.get("format", "table")
+
+        # Build psql command
+        fmt_flag = {"table": "", "csv": "--csv", "json": "--json"}.get(fmt, "")
+        conn_flag = f"'{conn_str}'" if conn_str else database
+
+        cmd = f"psql {conn_flag} {fmt_flag} -c \"{sql}\" 2>&1"
+        result = await _run_cmd_async(cmd, timeout=30)
+        result["stdout"] = result["stdout"][:10000]
+        return json.dumps(result)
+
+
+class RedisSkill(BaseTool):
+    def definition(self) -> ToolDefinition:
+        return ToolDefinition(
+            name="redis",
+            description="Execute Redis commands via redis-cli.",
+            category=ToolCategory.DATABASE,
+            parameters=[
+                ToolParameter("command", "string", "Redis command (GET, SET, DEL, KEYS, HGET, etc.)", required=True),
+                ToolParameter("args", "string", "Command arguments"),
+                ToolParameter("host", "string", "Redis host (default: localhost)"),
+                ToolParameter("port", "integer", "Redis port (default: 6379)"),
+                ToolParameter("password", "string", "Redis password"),
+            ],
+            permission=PermissionLevel.AUTHENTICATED,
+            tags=["redis", "cache", "database"],
+        )
+
+    async def execute(self, arguments: dict[str, Any], context: Optional[dict[str, Any]] = None) -> str:
+        command = arguments["command"].upper()
+        args = arguments.get("args", "")
+        host = arguments.get("host", "localhost")
+        port = arguments.get("port", 6379)
+        password = arguments.get("password", "")
+
+        auth = f"-a {password}" if password else ""
+        cmd = f"redis-cli -h {host} -p {port} {auth} {command} {args}".strip()
+        result = await _run_cmd_async(cmd, timeout=15)
+        return json.dumps({"command": command, "result": result["stdout"].strip(), "error": result["stderr"]})
+
+
+# ═══════════════════════════════════════════════════════════════
+# FILE COMPRESSION SKILLS
+# ═══════════════════════════════════════════════════════════════
+
+class FileCompressionSkill(BaseTool):
+    def definition(self) -> ToolDefinition:
+        return ToolDefinition(
+            name="compress",
+            description="Compress and decompress files: zip, tar.gz, gzip, bzip2, xz.",
+            category=ToolCategory.FILES,
+            parameters=[
+                ToolParameter("action", "string", "Action: compress or decompress", enum=["compress", "decompress"], required=True),
+                ToolParameter("format", "string", "Archive format", enum=["zip", "tar.gz", "gzip", "bzip2", "xz"], required=True),
+                ToolParameter("source", "string", "Source file or directory path", required=True),
+                ToolParameter("destination", "string", "Destination path"),
+                ToolParameter("password", "string", "Password (zip only)"),
+            ],
+            tags=["compress", "archive", "zip", "tar", "gzip"],
+        )
+
+    async def execute(self, arguments: dict[str, Any], context: Optional[dict[str, Any]] = None) -> str:
+        action = arguments["action"]
+        fmt = arguments["format"]
+        source = arguments["source"]
+        dest = arguments.get("destination", "")
+        password = arguments.get("password", "")
+
+        if not os.path.exists(source):
+            return json.dumps({"error": f"Source not found: {source}"})
+
         try:
-            result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
-            return (result.stdout + result.stderr)[:5000]
+            if action == "compress":
+                if fmt == "zip":
+                    import zipfile
+                    if not dest:
+                        dest = source.rstrip("/") + ".zip"
+                    with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as zf:
+                        if os.path.isfile(source):
+                            zf.write(source, os.path.basename(source))
+                        else:
+                            for root, dirs, files in os.walk(source):
+                                for f in files:
+                                    fpath = os.path.join(root, f)
+                                    arcname = os.path.relpath(fpath, os.path.dirname(source))
+                                    zf.write(fpath, arcname)
+                    return json.dumps({"success": True, "destination": dest, "format": "zip"})
+
+                elif fmt == "tar.gz":
+                    if not dest:
+                        dest = source.rstrip("/") + ".tar.gz"
+                    cmd = f"tar czf {dest} -C {os.path.dirname(source)} {os.path.basename(source)}"
+                    return json.dumps(_run_cmd(cmd))
+
+                elif fmt == "gzip":
+                    if not dest:
+                        dest = source + ".gz"
+                    cmd = f"gzip -c {source} > {dest}"
+                    return json.dumps(_run_cmd(cmd))
+
+                elif fmt == "bzip2":
+                    if not dest:
+                        dest = source + ".bz2"
+                    cmd = f"bzip2 -c {source} > {dest}"
+                    return json.dumps(_run_cmd(cmd))
+
+                elif fmt == "xz":
+                    if not dest:
+                        dest = source + ".xz"
+                    cmd = f"xz -c {source} > {dest}"
+                    return json.dumps(_run_cmd(cmd))
+
+            elif action == "decompress":
+                if fmt == "zip":
+                    import zipfile
+                    if not dest:
+                        dest = os.path.dirname(source) or "."
+                    with zipfile.ZipFile(source, "r") as zf:
+                        zf.extractall(dest)
+                    return json.dumps({"success": True, "destination": dest})
+
+                elif fmt == "tar.gz":
+                    if not dest:
+                        dest = os.path.dirname(source) or "."
+                    cmd = f"tar xzf {source} -C {dest}"
+                    return json.dumps(_run_cmd(cmd))
+
+                elif fmt == "gzip":
+                    cmd = f"gunzip -c {source}"
+                    if dest:
+                        cmd += f" > {dest}"
+                    return json.dumps(_run_cmd(cmd))
+
+                elif fmt in ("bzip2", "xz"):
+                    tool = "bunzip2" if fmt == "bzip2" else "unxz"
+                    cmd = f"{tool} -c {source}"
+                    if dest:
+                        cmd += f" > {dest}"
+                    return json.dumps(_run_cmd(cmd))
+
         except Exception as e:
-            return f"Error: {e}"
+            return json.dumps({"error": str(e)})
+
+        return json.dumps({"error": f"Unsupported action/format: {action}/{fmt}"})
 
 
-class PackageManagerSkill(Skill):
-    name = "pkg"
-    description = "Package managers — pip, npm, apt, brew"
-    category = "system"
-    commands = {"pip": "Python packages", "npm": "Node packages", "apt": "System packages", "brew": "Homebrew"}
+# ═══════════════════════════════════════════════════════════════
+# IMAGE PROCESSING SKILLS
+# ═══════════════════════════════════════════════════════════════
 
-    async def execute(self, command: str, args: str, **kwargs) -> str:
+class ImageProcessingSkill(BaseTool):
+    def definition(self) -> ToolDefinition:
+        return ToolDefinition(
+            name="image",
+            description="Process images: resize, crop, rotate, convert format, get info, apply filters, add watermark.",
+            category=ToolCategory.MEDIA,
+            parameters=[
+                ToolParameter("action", "string", "Image operation", required=True,
+                    enum=["info", "resize", "crop", "rotate", "convert", "thumbnail", "grayscale",
+                          "blur", "sharpen", "brightness", "contrast", "watermark", "compress"]),
+                ToolParameter("source", "string", "Source image path or URL", required=True),
+                ToolParameter("destination", "string", "Output path"),
+                ToolParameter("width", "integer", "Target width"),
+                ToolParameter("height", "integer", "Target height"),
+                ToolParameter("format", "string", "Output format (png, jpeg, webp, gif)"),
+                ToolParameter("quality", "integer", "Output quality (1-100)"),
+                ToolParameter("angle", "number", "Rotation angle in degrees"),
+                ToolParameter("text", "string", "Text for watermark"),
+            ],
+            tags=["image", "resize", "convert", "media", "photo"],
+        )
+
+    async def execute(self, arguments: dict[str, Any], context: Optional[dict[str, Any]] = None) -> str:
+        action = arguments["action"]
+        source = arguments["source"]
+        dest = arguments.get("destination", "")
+
+        try:
+            from PIL import Image, ImageFilter, ImageEnhance, ImageDraw, ImageFont
+        except ImportError:
+            # Fallback to ImageMagick CLI
+            return await self._execute_imagemagick(arguments)
+
+        try:
+            if action == "info":
+                if source.startswith("http"):
+                    import httpx
+                    async with httpx.AsyncClient() as client:
+                        resp = await client.get(source)
+                        img = Image.open(io.BytesIO(resp.content))
+                else:
+                    img = Image.open(source)
+                return json.dumps({
+                    "format": img.format, "mode": img.mode,
+                    "width": img.width, "height": img.height,
+                    "size_bytes": os.path.getsize(source) if not source.startswith("http") else None,
+                })
+
+            img = Image.open(source)
+
+            if action == "resize":
+                w = arguments.get("width", img.width)
+                h = arguments.get("height", img.height)
+                img = img.resize((w, h), Image.LANCZOS)
+
+            elif action == "crop":
+                w = arguments.get("width", img.width // 2)
+                h = arguments.get("height", img.height // 2)
+                left = (img.width - w) // 2
+                top = (img.height - h) // 2
+                img = img.crop((left, top, left + w, top + h))
+
+            elif action == "rotate":
+                angle = arguments.get("angle", 90)
+                img = img.rotate(angle, expand=True)
+
+            elif action == "thumbnail":
+                size = (arguments.get("width", 256), arguments.get("height", 256))
+                img.thumbnail(size, Image.LANCZOS)
+
+            elif action == "grayscale":
+                img = img.convert("L")
+
+            elif action == "blur":
+                img = img.filter(ImageFilter.GaussianBlur(radius=5))
+
+            elif action == "sharpen":
+                img = img.filter(ImageFilter.SHARPEN)
+
+            elif action == "brightness":
+                factor = arguments.get("quality", 150) / 100
+                enhancer = ImageEnhance.Brightness(img)
+                img = enhancer.enhance(factor)
+
+            elif action == "contrast":
+                factor = arguments.get("quality", 150) / 100
+                enhancer = ImageEnhance.Contrast(img)
+                img = enhancer.enhance(factor)
+
+            elif action == "watermark":
+                text = arguments.get("text", "Rally Agent")
+                if img.mode != "RGBA":
+                    img = img.convert("RGBA")
+                overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+                draw = ImageDraw.Draw(overlay)
+                try:
+                    font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 36)
+                except Exception:
+                    font = ImageFont.load_default()
+                bbox = draw.textbbox((0, 0), text, font=font)
+                tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+                x = img.width - tw - 20
+                y = img.height - th - 20
+                draw.text((x, y), text, fill=(255, 255, 255, 128), font=font)
+                img = Image.alpha_composite(img, overlay)
+
+            elif action == "compress":
+                quality = arguments.get("quality", 85)
+                if not dest:
+                    dest = source.rsplit(".", 1)[0] + "_compressed.jpg"
+                img = img.convert("RGB")
+                img.save(dest, "JPEG", quality=quality, optimize=True)
+                return json.dumps({
+                    "success": True, "destination": dest,
+                    "original_size": os.path.getsize(source),
+                    "compressed_size": os.path.getsize(dest),
+                })
+
+            # Save output
+            if not dest:
+                base, ext = os.path.splitext(source)
+                fmt = arguments.get("format", ext.lstrip(".") or "png")
+                dest = f"{base}_processed.{fmt}"
+
+            save_fmt = arguments.get("format", os.path.splitext(dest)[1].lstrip(".") or "png").upper()
+            if save_fmt == "JPG":
+                save_fmt = "JPEG"
+            if save_fmt == "JPEG" and img.mode in ("RGBA", "P"):
+                img = img.convert("RGB")
+
+            quality = arguments.get("quality", 90)
+            img.save(dest, save_fmt, quality=quality)
+            return json.dumps({"success": True, "destination": dest, "width": img.width, "height": img.height})
+
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    async def _execute_imagemagick(self, arguments: dict[str, Any]) -> str:
+        """Fallback using ImageMagick CLI."""
+        action = arguments["action"]
+        source = arguments["source"]
+        dest = arguments.get("destination", "")
+
+        if action == "info":
+            result = _run_cmd(f"identify -verbose {source} | head -20")
+            return json.dumps({"info": result["stdout"][:2000]})
+
+        if not dest:
+            dest = f"output_{action}.png"
+
         cmds = {
-            "pip": f"pip {args}",
-            "npm": f"npm {args}",
-            "apt": f"apt {args}",
-            "brew": f"brew {args}",
+            "resize": f"convert {source} -resize {arguments.get('width', 800)}x{arguments.get('height', 600)} {dest}",
+            "crop": f"convert {source} -gravity center -crop {arguments.get('width', 400)}x{arguments.get('height', 400)}+0+0 {dest}",
+            "rotate": f"convert {source} -rotate {arguments.get('angle', 90)} {dest}",
+            "grayscale": f"convert {source} -colorspace Gray {dest}",
+            "blur": f"convert {source} -blur 0x5 {dest}",
+            "sharpen": f"convert {source} -sharpen 0x5 {dest}",
+            "thumbnail": f"convert {source} -thumbnail {arguments.get('width', 256)}x{arguments.get('height', 256)} {dest}",
+            "convert": f"convert {source} {dest}",
+            "compress": f"convert {source} -quality {arguments.get('quality', 85)} {dest}",
         }
-        cmd = cmds.get(command)
+
+        cmd = cmds.get(action)
         if cmd:
-            try:
-                result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
-                return (result.stdout + result.stderr)[:5000]
-            except Exception as e:
-                return f"Error: {e}"
-        return f"Unknown package manager: {command}"
+            return json.dumps(_run_cmd(cmd))
+        return json.dumps({"error": f"Unsupported action: {action}"})
 
 
 # ═══════════════════════════════════════════════════════════════
-# 💻 CODE SKILLS
+# PDF GENERATION SKILL
 # ═══════════════════════════════════════════════════════════════
 
-class PythonSkill(Skill):
-    name = "python"
-    description = "Python execution — run code, install packages, manage venvs"
-    category = "code"
-    commands = {"run": "Run Python code", "eval": "Evaluate expression", "install": "Install package", "venv": "Create venv"}
+class PDFSkill(BaseTool):
+    def definition(self) -> ToolDefinition:
+        return ToolDefinition(
+            name="pdf",
+            description="Generate PDFs from text/HTML, merge PDFs, extract text, split pages.",
+            category=ToolCategory.MEDIA,
+            parameters=[
+                ToolParameter("action", "string", "PDF operation", required=True,
+                    enum=["generate", "merge", "extract_text", "split", "info"]),
+                ToolParameter("content", "string", "Text or HTML content for generation"),
+                ToolParameter("sources", "array", "List of PDF file paths (for merge/split)"),
+                ToolParameter("destination", "string", "Output PDF path"),
+                ToolParameter("page_size", "string", "Page size", enum=["A4", "Letter", "Legal"]),
+                ToolParameter("margins", "integer", "Page margins in points"),
+            ],
+            tags=["pdf", "generate", "document"],
+        )
 
-    async def execute(self, command: str, args: str, **kwargs) -> str:
-        if command == "run":
-            try:
-                import tempfile
-                with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-                    f.write(args)
-                    f.flush()
-                    result = subprocess.run(f"python3 {f.name}", shell=True, capture_output=True, text=True, timeout=30)
-                    os.unlink(f.name)
-                    return (result.stdout + result.stderr)[:10000]
-            except Exception as e:
-                return f"Error: {e}"
-        elif command == "eval":
-            try:
-                return str(eval(args))
-            except Exception as e:
-                return f"Error: {e}"
-        return f"Unknown command: {command}"
+    async def execute(self, arguments: dict[str, Any], context: Optional[dict[str, Any]] = None) -> str:
+        action = arguments["action"]
+        dest = arguments.get("destination", "output.pdf")
 
-
-class NodeSkill(Skill):
-    name = "node"
-    description = "Node.js execution — run JavaScript code"
-    category = "code"
-    commands = {"run": "Run JS code", "eval": "Evaluate expression"}
-
-    async def execute(self, command: str, args: str, **kwargs) -> str:
-        if command in ("run", "eval"):
-            try:
-                result = subprocess.run(f"node -e '{args}'", shell=True, capture_output=True, text=True, timeout=30)
-                return (result.stdout + result.stderr)[:10000]
-            except Exception as e:
-                return f"Error: {e}"
-        return f"Unknown command: {command}"
-
-
-class ShellSkill(Skill):
-    name = "shell"
-    description = "Shell execution — run any shell command"
-    category = "system"
-    commands = {"run": "Run command", "bash": "Run bash script"}
-
-    async def execute(self, command: str, args: str, **kwargs) -> str:
         try:
-            result = subprocess.run(args, shell=True, capture_output=True, text=True, timeout=30)
-            return (result.stdout + result.stderr)[:10000]
+            if action == "generate":
+                content = arguments.get("content", "")
+                if not content:
+                    return json.dumps({"error": "Content required for PDF generation"})
+
+                # Try reportlab first
+                try:
+                    from reportlab.lib.pagesizes import A4, letter, legal
+                    from reportlab.pdfgen import canvas
+                    from reportlab.lib.units import inch
+
+                    sizes = {"A4": A4, "Letter": letter, "Legal": legal}
+                    page_size = sizes.get(arguments.get("page_size", "A4"), A4)
+                    margins = arguments.get("margins", 72)
+
+                    c = canvas.Canvas(dest, pagesize=page_size)
+                    width, height = page_size
+                    text_obj = c.beginText(margins, height - margins)
+                    text_obj.setFont("Helvetica", 11)
+
+                    for line in content.split("\n"):
+                        # Wrap long lines
+                        while len(line) > 90:
+                            text_obj.textLine(line[:90])
+                            line = line[90:]
+                        text_obj.textLine(line)
+                        if text_obj.getY() < margins:
+                            c.drawText(text_obj)
+                            c.showPage()
+                            text_obj = c.beginText(margins, height - margins)
+                            text_obj.setFont("Helvetica", 11)
+
+                    c.drawText(text_obj)
+                    c.save()
+                    return json.dumps({"success": True, "destination": dest, "pages": "generated"})
+
+                except ImportError:
+                    # Fallback: use HTML -> PDF via wkhtmltopdf or pandoc
+                    html_content = f"<html><body><pre style='font-family: monospace; font-size: 11px;'>{content}</pre></body></html>"
+                    html_file = dest + ".html"
+                    with open(html_file, "w") as f:
+                        f.write(html_content)
+                    result = _run_cmd(f"wkhtmltopdf {html_file} {dest} 2>/dev/null || pandoc {html_file} -o {dest} 2>/dev/null")
+                    os.unlink(html_file)
+                    if os.path.exists(dest):
+                        return json.dumps({"success": True, "destination": dest})
+                    return json.dumps({"error": "No PDF generation library available. Install reportlab or wkhtmltopdf."})
+
+            elif action == "merge":
+                sources = arguments.get("sources", [])
+                if len(sources) < 2:
+                    return json.dumps({"error": "At least 2 PDF files required for merge"})
+                try:
+                    from PyPDF2 import PdfMerger
+                    merger = PdfMerger()
+                    for src in sources:
+                        merger.append(src)
+                    merger.write(dest)
+                    merger.close()
+                    return json.dumps({"success": True, "destination": dest, "merged": len(sources)})
+                except ImportError:
+                    # Fallback to ghostscript
+                    cmd = f"gs -dBATCH -dNOPAUSE -q -sDEVICE=pdfwrite -sOutputFile={dest} {' '.join(sources)}"
+                    return json.dumps(_run_cmd(cmd))
+
+            elif action == "extract_text":
+                source = arguments.get("sources", [None])[0] if arguments.get("sources") else arguments.get("content", "")
+                if not source or not os.path.exists(source):
+                    return json.dumps({"error": "Source PDF path required"})
+                try:
+                    from PyPDF2 import PdfReader
+                    reader = PdfReader(source)
+                    text = ""
+                    for page in reader.pages:
+                        text += page.extract_text() or ""
+                    return json.dumps({"text": text[:50000], "pages": len(reader.pages)})
+                except ImportError:
+                    result = _run_cmd(f"pdftotext {source} -")
+                    return json.dumps({"text": result["stdout"][:50000]})
+
+            elif action == "info":
+                source = arguments.get("sources", [None])[0] if arguments.get("sources") else ""
+                if not source or not os.path.exists(source):
+                    return json.dumps({"error": "Source PDF path required"})
+                try:
+                    from PyPDF2 import PdfReader
+                    reader = PdfReader(source)
+                    return json.dumps({
+                        "pages": len(reader.pages),
+                        "metadata": reader.metadata,
+                        "size_bytes": os.path.getsize(source),
+                    })
+                except ImportError:
+                    result = _run_cmd(f"pdfinfo {source}")
+                    return json.dumps({"info": result["stdout"]})
+
         except Exception as e:
-            return f"Error: {e}"
+            return json.dumps({"error": str(e)})
+
+        return json.dumps({"error": f"Unsupported action: {action}"})
 
 
-class RegexSkill(Skill):
-    name = "regex"
-    description = "Regex operations — test, match, replace, explain"
-    category = "code"
-    commands = {"test": "Test pattern", "match": "Find matches", "replace": "Replace", "explain": "Explain pattern"}
+# ═══════════════════════════════════════════════════════════════
+# DATA & ANALYSIS SKILLS
+# ═══════════════════════════════════════════════════════════════
 
-    async def execute(self, command: str, args: str, **kwargs) -> str:
-        parts = args.split(" ", 1)
-        if len(parts) < 2:
-            return "Usage: regex <pattern> <text>"
-        pattern, text = parts
+class DataAnalysisSkill(BaseTool):
+    def definition(self) -> ToolDefinition:
+        return ToolDefinition(
+            name="data_analysis",
+            description="Analyze data: CSV parsing, statistics, correlation, summary, filtering.",
+            category=ToolCategory.DATA,
+            parameters=[
+                ToolParameter("action", "string", "Analysis action", required=True,
+                    enum=["parse_csv", "statistics", "correlation", "filter", "summary", "groupby"]),
+                ToolParameter("data", "string", "CSV data or file path", required=True),
+                ToolParameter("columns", "array", "Columns to analyze"),
+                ToolParameter("filter_expr", "string", "Filter expression (e.g. 'age > 30')"),
+                ToolParameter("group_by", "string", "Column to group by"),
+                ToolParameter("agg", "string", "Aggregation function", enum=["sum", "mean", "count", "min", "max"]),
+            ],
+            tags=["data", "csv", "analysis", "statistics"],
+        )
+
+    async def execute(self, arguments: dict[str, Any], context: Optional[dict[str, Any]] = None) -> str:
+        action = arguments["action"]
+        data_src = arguments["data"]
+        columns = arguments.get("columns", [])
+
         try:
-            if command == "test":
-                return str(bool(re.search(pattern, text)))
-            elif command == "match":
-                matches = re.findall(pattern, text)
-                return json.dumps(matches, indent=2)
-            elif command == "replace":
-                return re.sub(pattern, "", text)
-            elif command == "explain":
-                return f"Pattern: {pattern}\nMatches: {re.findall(pattern, text)}"
-        except re.error as e:
-            return f"Regex error: {e}"
-        return f"Unknown command: {command}"
+            # Load data
+            if os.path.exists(data_src):
+                with open(data_src, "r") as f:
+                    reader = csv.DictReader(f)
+                    rows = list(reader)
+            else:
+                reader = csv.DictReader(io.StringIO(data_src))
+                rows = list(reader)
 
+            if not rows:
+                return json.dumps({"error": "No data found"})
 
-class JSONSkill(Skill):
-    name = "json"
-    description = "JSON operations — parse, format, query, validate"
-    category = "code"
-    commands = {"parse": "Parse JSON", "format": "Pretty print", "query": "Query with jq", "validate": "Validate JSON"}
+            if action == "parse_csv":
+                return json.dumps({
+                    "columns": list(rows[0].keys()),
+                    "row_count": len(rows),
+                    "preview": rows[:5],
+                })
 
-    async def execute(self, command: str, args: str, **kwargs) -> str:
+            elif action == "statistics":
+                target_cols = columns or list(rows[0].keys())
+                stats = {}
+                for col in target_cols:
+                    try:
+                        values = [float(row[col]) for row in rows if row.get(col)]
+                        if not values:
+                            continue
+                        n = len(values)
+                        mean = sum(values) / n
+                        sorted_v = sorted(values)
+                        median = sorted_v[n // 2]
+                        variance = sum((x - mean) ** 2 for x in values) / n
+                        stats[col] = {
+                            "count": n, "mean": round(mean, 4), "median": round(median, 4),
+                            "std": round(math.sqrt(variance), 4),
+                            "min": min(values), "max": max(values),
+                            "sum": round(sum(values), 4),
+                        }
+                    except (ValueError, KeyError):
+                        continue
+                return json.dumps({"statistics": stats})
+
+            elif action == "filter":
+                expr = arguments.get("filter_expr", "")
+                if not expr:
+                    return json.dumps({"error": "filter_expr required"})
+                # Simple filter: "column op value"
+                match = re.match(r"(\w+)\s*(>|<|>=|<=|==|!=)\s*(.+)", expr)
+                if not match:
+                    return json.dumps({"error": "Invalid filter expression"})
+                col, op, val = match.groups()
+                val = val.strip().strip('"').strip("'")
+                ops = {">": lambda a, b: a > b, "<": lambda a, b: a < b,
+                       ">=": lambda a, b: a >= b, "<=": lambda a, b: a <= b,
+                       "==": lambda a, b: str(a) == str(b), "!=": lambda a, b: str(a) != str(b)}
+                filtered = []
+                for row in rows:
+                    try:
+                        rv = float(row.get(col, 0))
+                        fv = float(val)
+                        if ops[op](rv, fv):
+                            filtered.append(row)
+                    except ValueError:
+                        if ops[op](row.get(col, ""), val):
+                            filtered.append(row)
+                return json.dumps({"filtered_count": len(filtered), "rows": filtered[:100]})
+
+            elif action == "summary":
+                return json.dumps({
+                    "columns": list(rows[0].keys()),
+                    "row_count": len(rows),
+                    "column_types": {
+                        col: "numeric" if all(self._is_numeric(r.get(col)) for r in rows if r.get(col)) else "text"
+                        for col in rows[0].keys()
+                    },
+                })
+
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+        return json.dumps({"error": f"Unknown action: {action}"})
+
+    @staticmethod
+    def _is_numeric(val: Any) -> bool:
         try:
-            if command == "parse":
-                return json.dumps(json.loads(args), indent=2)
-            elif command == "format":
-                return json.dumps(json.loads(args), indent=2)
-            elif command == "validate":
-                json.loads(args)
-                return "Valid JSON ✅"
+            float(str(val))
+            return True
+        except (ValueError, TypeError):
+            return False
+
+
+class JSONPathSkill(BaseTool):
+    def definition(self) -> ToolDefinition:
+        return ToolDefinition(
+            name="jsonpath",
+            description="Query JSON data using JSONPath expressions or jq-style queries.",
+            category=ToolCategory.DATA,
+            parameters=[
+                ToolParameter("data", "string", "JSON data string", required=True),
+                ToolParameter("query", "string", "JSONPath or dot-notation query (e.g. 'store.books[0].title')", required=True),
+            ],
+            tags=["json", "jsonpath", "query", "data"],
+        )
+
+    async def execute(self, arguments: dict[str, Any], context: Optional[dict[str, Any]] = None) -> str:
+        data_str = arguments["data"]
+        query = arguments["query"]
+
+        try:
+            data = json.loads(data_str)
         except json.JSONDecodeError as e:
-            return f"Invalid JSON: {e}"
-        return f"Unknown command: {command}"
+            return json.dumps({"error": f"Invalid JSON: {e}"})
 
-
-class SQLSkill(Skill):
-    name = "sql"
-    description = "SQL operations — query SQLite databases"
-    category = "code"
-    commands = {"query": "Run SQL query", "tables": "List tables", "schema": "Show schema"}
-
-    async def execute(self, command: str, args: str, **kwargs) -> str:
+        # Simple JSONPath: dot notation + array indices
         try:
-            import sqlite3
-            if command == "query":
-                parts = args.split(" ", 1)
-                db_path = parts[0]
-                query = parts[1] if len(parts) > 1 else "SELECT 1"
-                conn = sqlite3.connect(db_path)
-                cursor = conn.execute(query)
-                results = cursor.fetchall()
-                conn.close()
-                return "\n".join([str(r) for r in results[:100]])
-            elif command == "tables":
-                conn = sqlite3.connect(args)
-                tables = conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
-                conn.close()
-                return "\n".join([t[0] for t in tables])
-        except Exception as e:
-            return f"Error: {e}"
-        return f"Unknown command: {command}"
+            result = data
+            for part in re.split(r"\.(?![^\[]*\])", query):
+                if not part:
+                    continue
+                # Handle array index: key[0]
+                match = re.match(r"(\w+)\[(\d+)\]", part)
+                if match:
+                    key, idx = match.groups()
+                    if key:
+                        result = result[key]
+                    result = result[int(idx)]
+                elif part.endswith("]") and "[" in part:
+                    key, idx = part[:-1].split("[")
+                    result = result[key][int(idx)]
+                else:
+                    result = result[part]
+            return json.dumps({"query": query, "result": result})
+        except (KeyError, IndexError, TypeError) as e:
+            return json.dumps({"error": f"Query failed: {e}"})
 
 
 # ═══════════════════════════════════════════════════════════════
-# 🌐 WEB SKILLS
+# UTILITY SKILLS
 # ═══════════════════════════════════════════════════════════════
 
-class WebSearchSkill(Skill):
-    name = "web"
-    description = "Web search, URL fetching, page scraping"
-    category = "web"
-    commands = {"search": "Search web", "fetch": "Fetch URL", "weather": "Get weather", "news": "News headlines"}
+class UnitConverterSkill(BaseTool):
+    def definition(self) -> ToolDefinition:
+        return ToolDefinition(
+            name="unit_convert",
+            description="Convert between units: length, weight, temperature, speed, data size, currency.",
+            category=ToolCategory.UTILITY,
+            parameters=[
+                ToolParameter("value", "number", "Value to convert", required=True),
+                ToolParameter("from_unit", "string", "Source unit", required=True),
+                ToolParameter("to_unit", "string", "Target unit", required=True),
+            ],
+            tags=["convert", "units", "measurement"],
+        )
 
-    def __init__(self, search_engine=None):
-        self.search_engine = search_engine
+    async def execute(self, arguments: dict[str, Any], context: Optional[dict[str, Any]] = None) -> str:
+        value = float(arguments["value"])
+        from_u = arguments["from_unit"].lower().strip()
+        to_u = arguments["to_unit"].lower().strip()
 
-    async def execute(self, command: str, args: str, **kwargs) -> str:
-        if self.search_engine:
-            if command == "search":
-                results = await self.search_engine.search(args)
-                return "\n".join([f"📌 {r['title']}\n   {r['snippet']}\n   {r['url']}" for r in results])
-            elif command == "fetch":
-                return await self.search_engine.fetch_page(args)
-            elif command == "weather":
-                return await self.search_engine.get_weather(args)
-            elif command == "news":
-                headlines = await self.search_engine.get_news_headlines()
-                return "\n".join([f"• {h}" for h in headlines])
-        return "Web search not available"
+        # Conversion tables (everything to base unit)
+        conversions = {
+            # Length -> meters
+            "mm": 0.001, "cm": 0.01, "m": 1, "km": 1000,
+            "in": 0.0254, "ft": 0.3048, "yd": 0.9144, "mi": 1609.344,
+            # Weight -> grams
+            "mg": 0.001, "g": 1, "kg": 1000, "ton": 1_000_000,
+            "oz": 28.3495, "lb": 453.592,
+            # Data -> bytes
+            "b": 1, "kb": 1024, "mb": 1048576, "gb": 1073741824, "tb": 1099511627776,
+            # Speed -> m/s
+            "m/s": 1, "km/h": 0.277778, "mph": 0.44704, "knot": 0.514444,
+        }
+
+        # Temperature (special handling)
+        temp_units = {"c", "f", "k", "celsius", "fahrenheit", "kelvin"}
+        if from_u in temp_units or to_u in temp_units:
+            result = self._convert_temperature(value, from_u, to_u)
+            if result is not None:
+                return json.dumps({"value": value, "from": from_u, "to": to_u, "result": round(result, 4)})
+            return json.dumps({"error": f"Unknown temperature unit: {from_u} or {to_u}"})
+
+        from_factor = conversions.get(from_u)
+        to_factor = conversions.get(to_u)
+
+        if from_factor is None:
+            return json.dumps({"error": f"Unknown unit: {from_u}"})
+        if to_factor is None:
+            return json.dumps({"error": f"Unknown unit: {to_u}"})
+
+        base_value = value * from_factor
+        result = base_value / to_factor
+
+        return json.dumps({"value": value, "from": from_u, "to": to_u, "result": round(result, 6)})
+
+    @staticmethod
+    def _convert_temperature(value: float, from_u: str, to_u: str) -> Optional[float]:
+        # Normalize
+        aliases = {"celsius": "c", "fahrenheit": "f", "kelvin": "k"}
+        from_u = aliases.get(from_u, from_u)
+        to_u = aliases.get(to_u, to_u)
+
+        # Convert to Celsius first
+        if from_u == "c":
+            c = value
+        elif from_u == "f":
+            c = (value - 32) * 5 / 9
+        elif from_u == "k":
+            c = value - 273.15
+        else:
+            return None
+
+        # Convert from Celsius to target
+        if to_u == "c":
+            return c
+        elif to_u == "f":
+            return c * 9 / 5 + 32
+        elif to_u == "k":
+            return c + 273.15
+        return None
 
 
-class APISkill(Skill):
-    name = "api"
-    description = "HTTP API client — GET, POST, PUT, DELETE"
-    category = "web"
-    commands = {"get": "HTTP GET", "post": "HTTP POST", "put": "HTTP PUT", "delete": "HTTP DELETE"}
+class PasswordGeneratorSkill(BaseTool):
+    def definition(self) -> ToolDefinition:
+        return ToolDefinition(
+            name="password",
+            description="Generate secure passwords and check password strength.",
+            category=ToolCategory.SECURITY,
+            parameters=[
+                ToolParameter("action", "string", "Action: generate or check", enum=["generate", "check"], required=True),
+                ToolParameter("length", "integer", "Password length (default 20)"),
+                ToolParameter("password", "string", "Password to check (for 'check' action)"),
+                ToolParameter("include_symbols", "boolean", "Include special characters"),
+                ToolParameter("exclude_ambiguous", "boolean", "Exclude ambiguous chars (0, O, l, 1)"),
+            ],
+            tags=["password", "security", "generate"],
+        )
 
-    async def execute(self, command: str, args: str, **kwargs) -> str:
+    async def execute(self, arguments: dict[str, Any], context: Optional[dict[str, Any]] = None) -> str:
+        action = arguments["action"]
+
+        if action == "generate":
+            length = arguments.get("length", 20)
+            include_symbols = arguments.get("include_symbols", True)
+            exclude_ambiguous = arguments.get("exclude_ambiguous", False)
+
+            chars = string.ascii_letters + string.digits
+            if include_symbols:
+                chars += "!@#$%^&*()-_=+[]{}|;:,.<>?"
+            if exclude_ambiguous:
+                chars = chars.translate(str.maketrans("", "", "0OoIl1"))
+
+            import secrets
+            password = "".join(secrets.choice(chars) for _ in range(length))
+            return json.dumps({"password": password, "length": length, "strength": self._check_strength(password)})
+
+        elif action == "check":
+            password = arguments.get("password", "")
+            return json.dumps({"password": "***", "strength": self._check_strength(password)})
+
+        return json.dumps({"error": f"Unknown action: {action}"})
+
+    @staticmethod
+    def _check_strength(password: str) -> dict[str, Any]:
+        score = 0
+        checks = {
+            "length_8+": len(password) >= 8,
+            "length_12+": len(password) >= 12,
+            "uppercase": bool(re.search(r"[A-Z]", password)),
+            "lowercase": bool(re.search(r"[a-z]", password)),
+            "digits": bool(re.search(r"\d", password)),
+            "symbols": bool(re.search(r"[!@#$%^&*()\-_=+\[\]{}|;:,.<>?]", password)),
+            "no_repeats": not bool(re.search(r"(.)\1{2,}", password)),
+        }
+        score = sum(checks.values())
+        levels = {0: "Very Weak", 1: "Weak", 2: "Fair", 3: "Good", 4: "Strong", 5: "Strong", 6: "Very Strong", 7: "Excellent"}
+        return {"score": score, "max_score": 7, "level": levels.get(score, "Unknown"), "checks": checks}
+
+
+class IPInfoSkill(BaseTool):
+    def definition(self) -> ToolDefinition:
+        return ToolDefinition(
+            name="ip_info",
+            description="Get IP address information: your public IP, IP geolocation, DNS lookup.",
+            category=ToolCategory.NETWORK if hasattr(ToolCategory, 'NETWORK') else ToolCategory.UTILITY,
+            parameters=[
+                ToolParameter("action", "string", "Action: myip, lookup, dns", enum=["myip", "lookup", "dns"], required=True),
+                ToolParameter("target", "string", "IP address or domain to look up"),
+            ],
+            tags=["ip", "network", "geolocation", "dns"],
+        )
+
+    async def execute(self, arguments: dict[str, Any], context: Optional[dict[str, Any]] = None) -> str:
+        action = arguments["action"]
+        target = arguments.get("target", "")
+
         try:
             import httpx
-            async with httpx.AsyncClient(timeout=30) as client:
-                if command == "get":
-                    resp = await client.get(args)
-                elif command == "post":
-                    url, _, body = args.partition(" ")
-                    resp = await client.post(url, json=json.loads(body))
-                else:
-                    return f"Unsupported method: {command}"
-                return f"Status: {resp.status_code}\n{resp.text[:5000]}"
+            async with httpx.AsyncClient(timeout=10) as client:
+                if action == "myip":
+                    resp = await client.get("https://api.ipify.org?format=json")
+                    return json.dumps(resp.json())
+
+                elif action == "lookup":
+                    if not target:
+                        return json.dumps({"error": "target IP required"})
+                    resp = await client.get(f"http://ip-api.com/json/{target}")
+                    return json.dumps(resp.json())
+
+                elif action == "dns":
+                    if not target:
+                        return json.dumps({"error": "target domain required"})
+                    result = _run_cmd(f"dig +short {target} A && dig +short {target} AAAA")
+                    return json.dumps({"domain": target, "records": result["stdout"].strip().split("\n")})
+
         except Exception as e:
-            return f"Error: {e}"
+            return json.dumps({"error": str(e)})
+        return json.dumps({"error": f"Unknown action: {action}"})
 
 
-# ═══════════════════════════════════════════════════════════════
-# 📊 DATA & ANALYSIS SKILLS
-# ═══════════════════════════════════════════════════════════════
+class URLSkill(BaseTool):
+    def definition(self) -> ToolDefinition:
+        return ToolDefinition(
+            name="url_op",
+            description="URL operations: encode, decode, parse, build query string.",
+            category=ToolCategory.UTILITY,
+            parameters=[
+                ToolParameter("action", "string", "Action: encode, decode, parse, build_query",
+                    enum=["encode", "decode", "parse", "build_query"], required=True),
+                ToolParameter("url", "string", "URL or string to process", required=True),
+                ToolParameter("params", "object", "Query parameters (for build_query)"),
+            ],
+            tags=["url", "encode", "decode", "parse"],
+        )
 
-class DataAnalysisSkill(Skill):
-    name = "data"
-    description = "Data analysis — CSV, statistics, charts"
-    category = "data"
-    commands = {"csv": "Parse CSV", "stats": "Statistics", "chart": "Generate chart", "convert": "Convert formats"}
+    async def execute(self, arguments: dict[str, Any], context: Optional[dict[str, Any]] = None) -> str:
+        from urllib.parse import quote, unquote, urlparse, urlencode
 
-    async def execute(self, command: str, args: str, **kwargs) -> str:
-        if command == "csv":
-            try:
-                reader = csv.reader(io.StringIO(args))
-                rows = list(reader)
-                return f"Parsed {len(rows)} rows, {len(rows[0]) if rows else 0} columns\n" + "\n".join([", ".join(row[:5]) for row in rows[:10]])
-            except Exception as e:
-                return f"Error: {e}"
-        elif command == "stats":
-            try:
-                numbers = [float(x) for x in args.split()]
-                n = len(numbers)
-                mean = sum(numbers) / n
-                sorted_nums = sorted(numbers)
-                median = sorted_nums[n // 2]
-                variance = sum((x - mean) ** 2 for x in numbers) / n
-                std = math.sqrt(variance)
-                return f"Count: {n}\nMean: {mean:.2f}\nMedian: {median:.2f}\nStd Dev: {std:.2f}\nMin: {min(numbers)}\nMax: {max(numbers)}"
-            except Exception as e:
-                return f"Error: {e}"
-        return f"Unknown command: {command}"
+        action = arguments["action"]
+        url = arguments["url"]
 
+        if action == "encode":
+            return json.dumps({"encoded": quote(url)})
+        elif action == "decode":
+            return json.dumps({"decoded": unquote(url)})
+        elif action == "parse":
+            parsed = urlparse(url)
+            return json.dumps({
+                "scheme": parsed.scheme, "host": parsed.netloc,
+                "path": parsed.path, "query": parsed.query,
+                "fragment": parsed.fragment, "port": parsed.port,
+            })
+        elif action == "build_query":
+            params = arguments.get("params", {})
+            base = url.split("?")[0]
+            return json.dumps({"url": f"{base}?{urlencode(params)}"})
 
-class CalculatorSkill(Skill):
-    name = "math"
-    description = "Math operations — calculator, conversions, formulas"
-    category = "utility"
-    commands = {"calc": "Calculate", "convert": "Unit convert", "formula": "Apply formula"}
-
-    async def execute(self, command: str, args: str, **kwargs) -> str:
-        if command == "calc":
-            try:
-                # Safe math evaluation
-                allowed = set("0123456789+-*/.()%^ ")
-                if all(c in allowed for c in args):
-                    result = eval(args, {"__builtins__": {}}, {"math": math})
-                    return str(result)
-                return "Invalid expression"
-            except Exception as e:
-                return f"Error: {e}"
-        elif command == "convert":
-            return self._convert(args)
-        return f"Unknown command: {command}"
-
-    def _convert(self, args: str) -> str:
-        conversions = {
-            "km_to_miles": lambda x: x * 0.621371,
-            "miles_to_km": lambda x: x * 1.60934,
-            "kg_to_lbs": lambda x: x * 2.20462,
-            "lbs_to_kg": lambda x: x * 0.453592,
-            "c_to_f": lambda x: x * 9/5 + 32,
-            "f_to_c": lambda x: (x - 32) * 5/9,
-            "usd_to_eur": lambda x: x * 0.92,
-            "eur_to_usd": lambda x: x * 1.09,
-        }
-        parts = args.split()
-        if len(parts) >= 3:
-            value = float(parts[0])
-            conv_key = f"{parts[1]}_to_{parts[2]}"
-            if conv_key in conversions:
-                return str(conversions[conv_key](value))
-        return f"Available: {', '.join(conversions.keys())}"
+        return json.dumps({"error": f"Unknown action: {action}"})
 
 
-class CryptoSkill(Skill):
-    name = "crypto"
-    description = "Cryptography — hashing, encoding, encryption"
-    category = "security"
-    commands = {"hash": "Hash data", "encode": "Encode", "decode": "Decode", "generate": "Generate keys"}
+class LoremGeneratorSkill(BaseTool):
+    def definition(self) -> ToolDefinition:
+        return ToolDefinition(
+            name="lorem",
+            description="Generate Lorem Ipsum placeholder text.",
+            category=ToolCategory.UTILITY,
+            parameters=[
+                ToolParameter("count", "integer", "Number of items to generate"),
+                ToolParameter("type", "string", "Type: words, sentences, paragraphs", enum=["words", "sentences", "paragraphs"]),
+            ],
+            tags=["lorem", "text", "placeholder", "generate"],
+        )
 
-    async def execute(self, command: str, args: str, **kwargs) -> str:
-        if command == "hash":
-            parts = args.split(" ", 1)
-            algo = parts[0] if parts else "sha256"
-            data = parts[1] if len(parts) > 1 else ""
-            h = hashlib.new(algo)
-            h.update(data.encode())
-            return h.hexdigest()
-        elif command == "encode":
-            return base64.b64encode(args.encode()).decode()
-        elif command == "decode":
-            return base64.b64decode(args.encode()).decode()
-        elif command == "generate":
-            import secrets
-            return secrets.token_hex(int(args) if args.isdigit() else 32)
-        return f"Unknown command: {command}"
+    async def execute(self, arguments: dict[str, Any], context: Optional[dict[str, Any]] = None) -> str:
+        count = arguments.get("count", 1)
+        text_type = arguments.get("type", "paragraphs")
 
+        words = "lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua enim ad minim veniam quis nostrud exercitation ullamco laboris nisi aliquip ex ea commodo consequat duis aute irure in reprehenderit voluptate velit esse cillum fugiat nulla pariatur excepteur sint occaecat cupidatat non proident sunt culpa qui officia deserunt mollit anim id est laborum".split()
 
-class UUIDSkill(Skill):
-    name = "uuid"
-    description = "UUID generation and validation"
-    category = "utility"
-    commands = {"generate": "Generate UUID", "validate": "Validate UUID"}
+        if text_type == "words":
+            result = " ".join(random.choices(words, k=min(count, 500)))
+        elif text_type == "sentences":
+            sentences = []
+            for _ in range(min(count, 50)):
+                sentence = " ".join(random.choices(words, k=random.randint(8, 20)))
+                sentences.append(sentence.capitalize() + ".")
+            result = " ".join(sentences)
+        else:  # paragraphs
+            paragraphs = []
+            for _ in range(min(count, 20)):
+                sentences = []
+                for _ in range(random.randint(3, 7)):
+                    sentence = " ".join(random.choices(words, k=random.randint(8, 20)))
+                    sentences.append(sentence.capitalize() + ".")
+                paragraphs.append(" ".join(sentences))
+            result = "\n\n".join(paragraphs)
 
-    async def execute(self, command: str, args: str, **kwargs) -> str:
-        import uuid
-        if command == "generate":
-            count = int(args) if args.isdigit() else 1
-            return "\n".join([str(uuid.uuid4()) for _ in range(min(count, 100))])
-        elif command == "validate":
-            try:
-                uuid.UUID(args)
-                return "Valid UUID ✅"
-            except ValueError:
-                return "Invalid UUID ❌"
-        return f"Unknown command: {command}"
+        return json.dumps({"type": text_type, "count": count, "text": result})
 
 
-class DateTimeSkill(Skill):
-    name = "datetime"
-    description = "Date/time operations — now, convert, calculate"
-    category = "utility"
-    commands = {"now": "Current time", "convert": "Convert timezone", "diff": "Date difference", "format": "Format date"}
+class RandomSkill(BaseTool):
+    def definition(self) -> ToolDefinition:
+        return ToolDefinition(
+            name="random",
+            description="Generate random data: numbers, strings, choices, shuffle, sample.",
+            category=ToolCategory.UTILITY,
+            parameters=[
+                ToolParameter("type", "string", "Type: number, string, choice, shuffle, sample, boolean, uuid",
+                    enum=["number", "string", "choice", "shuffle", "sample", "boolean", "uuid"], required=True),
+                ToolParameter("min", "integer", "Min value (for number)"),
+                ToolParameter("max", "integer", "Max value (for number)"),
+                ToolParameter("length", "integer", "Length (for string)"),
+                ToolParameter("items", "array", "List of items (for choice/shuffle/sample)"),
+                ToolParameter("count", "integer", "Count (for sample/uuid)"),
+            ],
+            tags=["random", "generate", "utility"],
+        )
 
-    async def execute(self, command: str, args: str, **kwargs) -> str:
-        now = datetime.now()
-        if command == "now":
-            return now.strftime("%Y-%m-%d %H:%M:%S %A")
-        elif command == "format":
-            return now.strftime(args or "%Y-%m-%d %H:%M:%S")
-        elif command == "diff":
-            try:
-                parts = args.split()
-                d1 = datetime.fromisoformat(parts[0])
-                d2 = datetime.fromisoformat(parts[1]) if len(parts) > 1 else now
-                return str(abs((d2 - d1).days)) + " days"
-            except Exception as e:
-                return f"Error: {e}"
-        return f"Unknown command: {command}"
+    async def execute(self, arguments: dict[str, Any], context: Optional[dict[str, Any]] = None) -> str:
+        rtype = arguments["type"]
 
+        if rtype == "number":
+            lo = arguments.get("min", 0)
+            hi = arguments.get("max", 100)
+            return json.dumps({"result": random.randint(lo, hi)})
 
-class RandomSkill(Skill):
-    name = "random"
-    description = "Random generation — numbers, strings, choices"
-    category = "utility"
-    commands = {"number": "Random number", "string": "Random string", "choice": "Random choice", "shuffle": "Shuffle list"}
+        elif rtype == "string":
+            length = arguments.get("length", 16)
+            chars = string.ascii_letters + string.digits
+            return json.dumps({"result": "".join(random.choices(chars, k=length))})
 
-    async def execute(self, command: str, args: str, **kwargs) -> str:
-        if command == "number":
-            parts = args.split()
-            lo, hi = int(parts[0]), int(parts[1]) if len(parts) > 1 else 100
-            return str(random.randint(lo, hi))
-        elif command == "string":
-            length = int(args) if args.isdigit() else 16
-            return "".join(random.choices("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", k=length))
-        elif command == "choice":
-            choices = args.split(",")
-            return random.choice(choices).strip()
-        elif command == "shuffle":
-            items = args.split(",")
-            random.shuffle(items)
-            return ", ".join(items)
-        return f"Unknown command: {command}"
+        elif rtype == "choice":
+            items = arguments.get("items", [])
+            return json.dumps({"result": random.choice(items) if items else None})
 
+        elif rtype == "shuffle":
+            items = arguments.get("items", [])
+            shuffled = list(items)
+            random.shuffle(shuffled)
+            return json.dumps({"result": shuffled})
 
-class LoremSkill(Skill):
-    name = "lorem"
-    description = "Lorem ipsum text generation"
-    category = "utility"
-    commands = {"generate": "Generate text", "words": "Generate words", "paragraphs": "Generate paragraphs"}
+        elif rtype == "sample":
+            items = arguments.get("items", [])
+            count = min(arguments.get("count", 1), len(items))
+            return json.dumps({"result": random.sample(items, count)})
 
-    async def execute(self, command: str, args: str, **kwargs) -> str:
-        words = "lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua".split()
-        if command == "words":
-            count = int(args) if args.isdigit() else 10
-            return " ".join(random.choices(words, k=count))
-        elif command in ("paragraphs", "generate"):
-            count = int(args) if args.isdigit() else 1
-            paras = []
-            for _ in range(count):
-                para = " ".join(random.choices(words, k=random.randint(40, 80)))
-                paras.append(para.capitalize() + ".")
-            return "\n\n".join(paras)
-        return " ".join(random.choices(words, k=10))
+        elif rtype == "boolean":
+            return json.dumps({"result": random.choice([True, False])})
+
+        elif rtype == "uuid":
+            count = arguments.get("count", 1)
+            return json.dumps({"result": [str(uuid.uuid4()) for _ in range(min(count, 100))]})
+
+        return json.dumps({"error": f"Unknown type: {rtype}"})
 
 
-# ═══════════════════════════════════════════════════════════════
-# 📝 WRITING & CONTENT SKILLS
-# ═══════════════════════════════════════════════════════════════
+class EncodingSkill(BaseTool):
+    def definition(self) -> ToolDefinition:
+        return ToolDefinition(
+            name="encoding",
+            description="Encode/decode data: base64, URL, HTML entities, hex, binary.",
+            category=ToolCategory.UTILITY,
+            parameters=[
+                ToolParameter("action", "string", "Action: encode or decode", enum=["encode", "decode"], required=True),
+                ToolParameter("format", "string", "Encoding format", enum=["base64", "url", "html", "hex", "binary"], required=True),
+                ToolParameter("data", "string", "Data to encode/decode", required=True),
+            ],
+            tags=["encode", "decode", "base64", "url", "hex"],
+        )
 
-class MarkdownSkill(Skill):
-    name = "markdown"
-    description = "Markdown operations — render, convert, validate"
-    category = "writing"
-    commands = {"render": "Render MD", "toc": "Generate TOC", "validate": "Validate MD"}
+    async def execute(self, arguments: dict[str, Any], context: Optional[dict[str, Any]] = None) -> str:
+        action = arguments["action"]
+        fmt = arguments["format"]
+        data = arguments["data"]
 
-    async def execute(self, command: str, args: str, **kwargs) -> str:
-        if command == "toc":
-            lines = args.split("\n")
+        try:
+            if fmt == "base64":
+                if action == "encode":
+                    return json.dumps({"result": base64.b64encode(data.encode()).decode()})
+                else:
+                    return json.dumps({"result": base64.b64decode(data.encode()).decode()})
+
+            elif fmt == "url":
+                from urllib.parse import quote, unquote
+                if action == "encode":
+                    return json.dumps({"result": quote(data)})
+                else:
+                    return json.dumps({"result": unquote(data)})
+
+            elif fmt == "html":
+                import html
+                if action == "encode":
+                    return json.dumps({"result": html.escape(data)})
+                else:
+                    return json.dumps({"result": html.unescape(data)})
+
+            elif fmt == "hex":
+                if action == "encode":
+                    return json.dumps({"result": data.encode().hex()})
+                else:
+                    return json.dumps({"result": bytes.fromhex(data).decode()})
+
+            elif fmt == "binary":
+                if action == "encode":
+                    return json.dumps({"result": " ".join(format(b, "08b") for b in data.encode())})
+                else:
+                    bytes_data = bytes(int(b, 2) for b in data.split())
+                    return json.dumps({"result": bytes_data.decode()})
+
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+        return json.dumps({"error": f"Unknown format: {fmt}"})
+
+
+class CronSkill(BaseTool):
+    def definition(self) -> ToolDefinition:
+        return ToolDefinition(
+            name="cron",
+            description="Manage scheduled tasks: list, add, remove cron jobs.",
+            category=ToolCategory.AUTOMATION,
+            parameters=[
+                ToolParameter("action", "string", "Action: list, add, remove", enum=["list", "add", "remove"], required=True),
+                ToolParameter("schedule", "string", "Cron schedule expression (for add)"),
+                ToolParameter("command", "string", "Command to run (for add)"),
+                ToolParameter("job_id", "string", "Job identifier (for remove)"),
+            ],
+            permission=PermissionLevel.AUTHENTICATED,
+            tags=["cron", "schedule", "automation"],
+        )
+
+    async def execute(self, arguments: dict[str, Any], context: Optional[dict[str, Any]] = None) -> str:
+        action = arguments["action"]
+
+        if action == "list":
+            result = _run_cmd("crontab -l 2>/dev/null")
+            return json.dumps({"jobs": result["stdout"].strip() or "No cron jobs"})
+
+        elif action == "add":
+            schedule = arguments.get("schedule", "")
+            command = arguments.get("command", "")
+            if not schedule or not command:
+                return json.dumps({"error": "schedule and command required"})
+            # Validate cron expression (5 fields)
+            fields = schedule.split()
+            if len(fields) != 5:
+                return json.dumps({"error": "Schedule must have 5 fields: minute hour day month weekday"})
+            entry = f"{schedule} {command}"
+            result = _run_cmd(f'(crontab -l 2>/dev/null; echo "{entry}") | crontab -')
+            return json.dumps({"success": True, "entry": entry})
+
+        elif action == "remove":
+            job_id = arguments.get("job_id", "")
+            if not job_id:
+                return json.dumps({"error": "job_id required"})
+            result = _run_cmd(f"crontab -l 2>/dev/null | grep -v '{job_id}' | crontab -")
+            return json.dumps({"success": True, "removed": job_id})
+
+        return json.dumps({"error": f"Unknown action: {action}"})
+
+
+class MarkdownSkill(BaseTool):
+    def definition(self) -> ToolDefinition:
+        return ToolDefinition(
+            name="markdown",
+            description="Markdown operations: generate TOC, validate, convert to HTML, extract headings.",
+            category=ToolCategory.UTILITY,
+            parameters=[
+                ToolParameter("action", "string", "Action: toc, validate, to_html, headings",
+                    enum=["toc", "validate", "to_html", "headings"], required=True),
+                ToolParameter("content", "string", "Markdown content", required=True),
+            ],
+            tags=["markdown", "text", "format"],
+        )
+
+    async def execute(self, arguments: dict[str, Any], context: Optional[dict[str, Any]] = None) -> str:
+        action = arguments["action"]
+        content = arguments["content"]
+
+        if action == "toc":
             toc = []
-            for line in lines:
+            for line in content.split("\n"):
                 if line.startswith("#"):
                     level = len(line) - len(line.lstrip("#"))
                     title = line.lstrip("#").strip()
                     indent = "  " * (level - 1)
-                    toc.append(f"{indent}- {title}")
-            return "\n".join(toc) or "No headings found"
-        elif command == "validate":
-            # Basic MD validation
+                    anchor = re.sub(r"[^\w\s-]", "", title.lower()).replace(" ", "-")
+                    toc.append(f"{indent}- [{title}](#{anchor})")
+            return json.dumps({"toc": "\n".join(toc) or "No headings found"})
+
+        elif action == "validate":
             issues = []
-            if "**" in args and args.count("**") % 2 != 0:
-                issues.append("Unclosed bold markers")
-            if "`" in args and args.count("`") % 2 != 0:
-                issues.append("Unclosed code markers")
-            return "Valid ✅" if not issues else "\n".join(issues)
-        return f"Unknown command: {command}"
+            if content.count("**") % 2 != 0:
+                issues.append("Unclosed bold markers (**)")
+            if content.count("*") % 2 != 0:
+                issues.append("Possible unclosed italic markers (*)")
+            code_blocks = content.count("```")
+            if code_blocks % 2 != 0:
+                issues.append("Unclosed code block (```)")
+            return json.dumps({"valid": len(issues) == 0, "issues": issues})
+
+        elif action == "to_html":
+            try:
+                import markdown
+                html_content = markdown.markdown(content, extensions=["tables", "fenced_code"])
+                return json.dumps({"html": html_content})
+            except ImportError:
+                return json.dumps({"error": "markdown library not installed"})
+
+        elif action == "headings":
+            headings = []
+            for line in content.split("\n"):
+                if line.startswith("#"):
+                    level = len(line) - len(line.lstrip("#"))
+                    headings.append({"level": level, "text": line.lstrip("#").strip()})
+            return json.dumps({"headings": headings})
+
+        return json.dumps({"error": f"Unknown action: {action}"})
 
 
-class YAMLSkill(Skill):
-    name = "yaml"
-    description = "YAML operations — parse, validate, convert"
-    category = "data"
-    commands = {"parse": "Parse YAML", "validate": "Validate YAML", "to_json": "Convert to JSON"}
+class YAMLSkill(BaseTool):
+    def definition(self) -> ToolDefinition:
+        return ToolDefinition(
+            name="yaml_op",
+            description="YAML operations: parse, validate, convert to JSON.",
+            category=ToolCategory.DATA,
+            parameters=[
+                ToolParameter("action", "string", "Action: parse, validate, to_json", enum=["parse", "validate", "to_json"], required=True),
+                ToolParameter("data", "string", "YAML data", required=True),
+            ],
+            tags=["yaml", "parse", "data"],
+        )
 
-    async def execute(self, command: str, args: str, **kwargs) -> str:
+    async def execute(self, arguments: dict[str, Any], context: Optional[dict[str, Any]] = None) -> str:
+        action = arguments["action"]
+        data = arguments["data"]
+
         try:
             import yaml
-            if command == "parse":
-                data = yaml.safe_load(args)
-                return json.dumps(data, indent=2)
-            elif command == "validate":
-                yaml.safe_load(args)
-                return "Valid YAML ✅"
-            elif command == "to_json":
-                data = yaml.safe_load(args)
-                return json.dumps(data, indent=2)
+            if action in ("parse", "to_json"):
+                parsed = yaml.safe_load(data)
+                return json.dumps({"result": parsed}, default=str)
+            elif action == "validate":
+                yaml.safe_load(data)
+                return json.dumps({"valid": True})
         except Exception as e:
-            return f"Error: {e}"
-        return f"Unknown command: {command}"
+            return json.dumps({"valid": False, "error": str(e)})
+        return json.dumps({"error": f"Unknown action: {action}"})
 
 
-class TOMLSkill(Skill):
-    name = "toml"
-    description = "TOML operations — parse, validate"
-    category = "data"
-    commands = {"parse": "Parse TOML", "validate": "Validate TOML"}
+class TOMLSkill(BaseTool):
+    def definition(self) -> ToolDefinition:
+        return ToolDefinition(
+            name="toml_op",
+            description="TOML operations: parse, validate, convert to JSON.",
+            category=ToolCategory.DATA,
+            parameters=[
+                ToolParameter("action", "string", "Action: parse, validate, to_json", enum=["parse", "validate", "to_json"], required=True),
+                ToolParameter("data", "string", "TOML data", required=True),
+            ],
+            tags=["toml", "parse", "data"],
+        )
 
-    async def execute(self, command: str, args: str, **kwargs) -> str:
+    async def execute(self, arguments: dict[str, Any], context: Optional[dict[str, Any]] = None) -> str:
+        action = arguments["action"]
+        data = arguments["data"]
+
         try:
-            if command == "parse":
-                try:
-                    import tomllib
-                except ImportError:
-                    import tomli as tomllib
-                data = tomllib.loads(args)
-                return json.dumps(data, indent=2)
-            elif command == "validate":
-                try:
-                    import tomllib
-                except ImportError:
-                    import tomli as tomllib
-                tomllib.loads(args)
-                return "Valid TOML ✅"
-        except Exception as e:
-            return f"Error: {e}"
-        return f"Unknown command: {command}"
-
-
-class TemplateSkill(Skill):
-    name = "template"
-    description = "Template engine — Jinja2-like templates"
-    category = "writing"
-    commands = {"render": "Render template", "list": "List templates"}
-
-    async def execute(self, command: str, args: str, **kwargs) -> str:
-        if command == "render":
-            # Simple variable substitution
-            template = args
-            variables = kwargs.get("variables", {})
-            for key, value in variables.items():
-                template = template.replace(f"{{{{{key}}}}}", str(value))
-            return template
-        return f"Unknown command: {command}"
-
-
-# ═══════════════════════════════════════════════════════════════
-# 🔒 SECURITY SKILLS
-# ═══════════════════════════════════════════════════════════════
-
-class PasswordSkill(Skill):
-    name = "password"
-    description = "Password generation, strength checking"
-    category = "security"
-    commands = {"generate": "Generate password", "strength": "Check strength"}
-
-    async def execute(self, command: str, args: str, **kwargs) -> str:
-        import secrets
-        import string
-        if command == "generate":
-            length = int(args) if args.isdigit() else 20
-            chars = string.ascii_letters + string.digits + "!@#$%^&*"
-            return "".join(secrets.choice(chars) for _ in range(length))
-        elif command == "strength":
-            score = 0
-            if len(args) >= 8: score += 1
-            if len(args) >= 12: score += 1
-            if any(c.isupper() for c in args): score += 1
-            if any(c.islower() for c in args): score += 1
-            if any(c.isdigit() for c in args): score += 1
-            if any(c in "!@#$%^&*" for c in args): score += 1
-            levels = {0: "Very Weak", 1: "Weak", 2: "Fair", 3: "Good", 4: "Strong", 5: "Very Strong", 6: "Excellent"}
-            return f"Strength: {levels.get(score, 'Unknown')} ({score}/6)"
-        return f"Unknown command: {command}"
-
-
-class IPInfoSkill(Skill):
-    name = "ip"
-    description = "IP address information and lookup"
-    category = "network"
-    commands = {"myip": "Your public IP", "lookup": "IP lookup", "dns": "DNS lookup"}
-
-    async def execute(self, command: str, args: str, **kwargs) -> str:
-        try:
-            import httpx
-            if command == "myip":
-                async with httpx.AsyncClient(timeout=10) as client:
-                    resp = await client.get("https://api.ipify.org?format=json")
-                    return resp.json().get("ip", "Unknown")
-            elif command == "lookup":
-                async with httpx.AsyncClient(timeout=10) as client:
-                    resp = await client.get(f"http://ip-api.com/json/{args}")
-                    data = resp.json()
-                    return json.dumps(data, indent=2)
-        except Exception as e:
-            return f"Error: {e}"
-        return f"Unknown command: {command}"
-
-
-class URLSkill(Skill):
-    name = "url"
-    description = "URL operations — encode, decode, parse, shorten"
-    category = "web"
-    commands = {"encode": "URL encode", "decode": "URL decode", "parse": "Parse URL"}
-
-    async def execute(self, command: str, args: str, **kwargs) -> str:
-        from urllib.parse import quote, unquote, urlparse
-        if command == "encode":
-            return quote(args)
-        elif command == "decode":
-            return unquote(args)
-        elif command == "parse":
-            parsed = urlparse(args)
-            return f"Scheme: {parsed.scheme}\nHost: {parsed.netloc}\nPath: {parsed.path}\nQuery: {parsed.query}\nFragment: {parsed.fragment}"
-        return f"Unknown command: {command}"
-
-
-# ═══════════════════════════════════════════════════════════════
-# 🏠 IoT & AUTOMATION SKILLS
-# ═══════════════════════════════════════════════════════════════
-
-class CronSkill(Skill):
-    name = "cron"
-    description = "Scheduled tasks — cron jobs, timers, reminders"
-    category = "automation"
-    commands = {"list": "List jobs", "add": "Add job", "remove": "Remove job"}
-
-    async def execute(self, command: str, args: str, **kwargs) -> str:
-        if command == "list":
             try:
-                result = subprocess.run("crontab -l", shell=True, capture_output=True, text=True)
-                return result.stdout or "No cron jobs"
-            except Exception as e:
-                return f"Error: {e}"
-        return f"Unknown command: {command}"
+                import tomllib
+            except ImportError:
+                import tomli as tomllib
 
-
-class ClipboardSkill(Skill):
-    name = "clipboard"
-    description = "Clipboard operations — copy, paste"
-    category = "utility"
-    commands = {"copy": "Copy to clipboard", "paste": "Paste from clipboard"}
-
-    async def execute(self, command: str, args: str, **kwargs) -> str:
-        try:
-            if command == "copy":
-                process = subprocess.Popen(["xclip", "-selection", "clipboard"], stdin=subprocess.PIPE)
-                process.communicate(args.encode())
-                return "Copied to clipboard ✅"
-            elif command == "paste":
-                result = subprocess.run(["xclip", "-selection", "clipboard", "-o"], capture_output=True, text=True)
-                return result.stdout
-        except Exception:
-            return "Clipboard not available"
-        return f"Unknown command: {command}"
-
-
-class NotificationSkill(Skill):
-    name = "notify"
-    description = "Desktop notifications"
-    category = "utility"
-    commands = {"send": "Send notification"}
-
-    async def execute(self, command: str, args: str, **kwargs) -> str:
-        try:
-            subprocess.run(["notify-send", "Rally Agent", args], capture_output=True)
-            return "Notification sent ✅"
-        except Exception:
-            return "Notifications not available"
-
-
-# ═══════════════════════════════════════════════════════════════
-# 🎯 MASSIVE SKILLS REGISTRY
-# ═══════════════════════════════════════════════════════════════
-
-class SkillsRegistry:
-    """Registry for ALL skills — hundreds of built-in capabilities"""
-
-    def __init__(self, config, search_engine=None):
-        self.config = config
-        self.skills: dict[str, Skill] = {}
-        self._register_all(search_engine)
-
-    def _register_all(self, search_engine=None):
-        """Register ALL built-in skills"""
-        skills = [
-            # Files & System
-            FileOperationsSkill(),
-            SystemInfoSkill(),
-            GitSkill(),
-            DockerSkill(),
-            PackageManagerSkill(),
-            # Code
-            PythonSkill(),
-            NodeSkill(),
-            ShellSkill(),
-            RegexSkill(),
-            JSONSkill(),
-            SQLSkill(),
-            # Web
-            WebSearchSkill(search_engine),
-            APISkill(),
-            # Data
-            DataAnalysisSkill(),
-            CalculatorSkill(),
-            # Utility
-            CryptoSkill(),
-            UUIDSkill(),
-            DateTimeSkill(),
-            RandomSkill(),
-            LoremSkill(),
-            # Writing
-            MarkdownSkill(),
-            YAMLSkill(),
-            TOMLSkill(),
-            TemplateSkill(),
-            # Security
-            PasswordSkill(),
-            IPInfoSkill(),
-            URLSkill(),
-            # Automation
-            CronSkill(),
-            ClipboardSkill(),
-            NotificationSkill(),
-        ]
-
-        for skill in skills:
-            self.skills[skill.name] = skill
-
-    def get(self, name: str) -> Optional[Skill]:
-        return self.skills.get(name)
-
-    def get_all(self) -> list[dict]:
-        return [s.to_dict() for s in self.skills.values()]
-
-    def get_names(self) -> list[str]:
-        return list(self.skills.keys())
-
-    def get_by_category(self, category: str) -> list[Skill]:
-        return [s for s in self.skills.values() if s.category == category]
-
-    def get_categories(self) -> list[str]:
-        return list(set(s.category for s in self.skills.values()))
-
-    def get_total_commands(self) -> int:
-        return sum(len(s.commands) for s in self.skills.values())
-
-    async def execute(self, skill_name: str, command: str, args: str, **kwargs) -> str:
-        skill = self.skills.get(skill_name)
-        if not skill:
-            return f"Unknown skill: {skill_name}. Available: {', '.join(self.skills.keys())}"
-        try:
-            return await skill.execute(command, args, **kwargs)
+            if action in ("parse", "to_json"):
+                parsed = tomllib.loads(data)
+                return json.dumps({"result": parsed}, default=str)
+            elif action == "validate":
+                tomllib.loads(data)
+                return json.dumps({"valid": True})
         except Exception as e:
-            return f"Skill error: {e}"
+            return json.dumps({"valid": False, "error": str(e)})
+        return json.dumps({"error": f"Unknown action: {action}"})
 
-    def register(self, skill: Skill):
-        """Register a custom skill"""
-        self.skills[skill.name] = skill
+
+# ═══════════════════════════════════════════════════════════════
+# SKILL REGISTRATION
+# ═══════════════════════════════════════════════════════════════
+
+def register_all_skills(registry: ToolRegistry) -> int:
+    """Register all built-in skills into the tool registry. Returns count of skills registered."""
+    skills = [
+        # System
+        SystemInfoSkill(),
+        GitSkill(),
+        DockerSkill(),
+        KubernetesSkill(),
+        PackageManagerSkill(),
+        # Database
+        SQLiteSkill(),
+        PostgresSkill(),
+        RedisSkill(),
+        # Files
+        FileCompressionSkill(),
+        # Media
+        ImageProcessingSkill(),
+        PDFSkill(),
+        # Data
+        DataAnalysisSkill(),
+        JSONPathSkill(),
+        # Utility
+        UnitConverterSkill(),
+        PasswordGeneratorSkill(),
+        IPInfoSkill(),
+        URLSkill(),
+        LoremGeneratorSkill(),
+        RandomSkill(),
+        EncodingSkill(),
+        CronSkill(),
+        MarkdownSkill(),
+        YAMLSkill(),
+        TOMLSkill(),
+    ]
+
+    for skill in skills:
+        registry.register(skill)
+
+    return len(skills)

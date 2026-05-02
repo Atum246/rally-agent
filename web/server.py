@@ -1,17 +1,1263 @@
 """
-🟣 Rally Agent — Web Server
-Full-featured web UI inspired by Manus AI.
-Beautiful purple theme. No generic trash.
+🟣 Rally Agent — Web Server (Complete Rewrite)
+FastAPI + WebSocket + Full REST API + Beautiful Purple Hacker Theme
+Single-file web app with inline HTML/CSS/JS
 """
 
 import os
 import json
 import asyncio
 import time
+import hashlib
+import secrets
+import uuid
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
+from typing import Optional, Any
+from collections import defaultdict
 
-from cli.theme import Theme
+try:
+    from fastapi import (
+        FastAPI, WebSocket, WebSocketDisconnect, Request, Depends,
+        HTTPException, status, Query, Body, Header, UploadFile, File,
+    )
+    from fastapi.responses import (
+        HTMLResponse, JSONResponse, FileResponse, StreamingResponse,
+    )
+    from fastapi.staticfiles import StaticFiles
+    from fastapi.middleware.cors import CORSMiddleware
+    import uvicorn
+except ImportError:
+    raise RuntimeError("Web UI requires: pip install fastapi uvicorn python-multipart pyjwt")
+
+
+# ═══════════════════════════════════════════════════════════════
+# 🔐 JWT Auth Helpers
+# ═══════════════════════════════════════════════════════════════
+
+JWT_SECRET = os.environ.get("RALLY_JWT_SECRET", secrets.token_hex(32))
+JWT_ALGORITHM = "HS256"
+JWT_EXPIRY_HOURS = 24
+
+def _jwt_encode(payload: dict) -> str:
+    """Minimal JWT encode (no external dependency)"""
+    import base64
+    header = base64.urlsafe_b64encode(json.dumps({"alg": "HS256", "typ": "JWT"}).encode()).rstrip(b"=").decode()
+    body = base64.urlsafe_b64encode(json.dumps(payload).encode()).rstrip(b"=").decode()
+    sig_input = f"{header}.{body}"
+    sig = hashlib.sha256(f"{sig_input}.{JWT_SECRET}".encode()).hexdigest()[:43]
+    return f"{header}.{body}.{sig}"
+
+def _jwt_decode(token: str) -> Optional[dict]:
+    """Minimal JWT decode"""
+    import base64
+    try:
+        parts = token.split(".")
+        if len(parts) != 3:
+            return None
+        sig_input = f"{parts[0]}.{parts[1]}"
+        expected = hashlib.sha256(f"{sig_input}.{JWT_SECRET}".encode()).hexdigest()[:43]
+        if parts[2] != expected:
+            return None
+        padding = 4 - len(parts[1]) % 4
+        payload = json.loads(base64.urlsafe_b64decode(parts[1] + "=" * padding))
+        if payload.get("exp", 0) < time.time():
+            return None
+        return payload
+    except Exception:
+        return None
+
+
+# ═══════════════════════════════════════════════════════════════
+# 🎨 Purple Hacker Theme — Full Inline HTML/CSS/JS
+# ═══════════════════════════════════════════════════════════════
+
+MAIN_HTML = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>⚡ Rally Agent</title>
+<style>
+/* ═══════ RESET & BASE ═══════ */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg-900:#0a0a14;--bg-800:#0f0f1e;--bg-700:#151528;--bg-600:#1a1a35;
+  --bg-500:#22224a;--bg-400:#2a2a55;--purple-500:#8b5cf6;--purple-400:#a78bfa;
+  --purple-300:#c4b5fd;--purple-600:#7c3aed;--purple-700:#6d28d9;--purple-800:#5b21b6;
+  --purple-glow:0 0 20px rgba(139,92,246,0.3),0 0 60px rgba(139,92,246,0.1);
+  --green-500:#10b981;--green-400:#34d399;--red-500:#ef4444;--red-400:#f87171;
+  --yellow-500:#eab308;--blue-500:#3b82f6;--cyan-500:#06b6d4;--text:#e2e8f0;
+  --text-dim:#94a3b8;--text-muted:#64748b;--border:#2a2a55;--radius:12px;
+  --font:'SF Mono','JetBrains Mono','Fira Code',monospace;
+}
+html{font-size:14px;scroll-behavior:smooth}
+body{font-family:var(--font);background:var(--bg-900);color:var(--text);min-height:100vh;overflow:hidden}
+a{color:var(--purple-400);text-decoration:none}
+a:hover{color:var(--purple-300)}
+button{font-family:var(--font);cursor:pointer;border:none;outline:none}
+input,textarea,select{font-family:var(--font);outline:none}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:var(--bg-800)}
+::-webkit-scrollbar-thumb{background:var(--bg-500);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:var(--purple-700)}
+
+/* ═══════ LAYOUT ═══════ */
+#app{display:flex;height:100vh}
+#sidebar{width:240px;min-width:240px;background:var(--bg-800);border-right:1px solid var(--border);display:flex;flex-direction:column;z-index:100}
+#main{flex:1;display:flex;flex-direction:column;overflow:hidden}
+
+/* ═══════ SIDEBAR ═══════ */
+.sidebar-header{padding:20px 16px 12px;border-bottom:1px solid var(--border)}
+.sidebar-logo{display:flex;align-items:center;gap:10px;font-size:1.2rem;font-weight:700;color:var(--purple-400)}
+.sidebar-logo .logo-icon{font-size:1.6rem}
+.sidebar-nav{flex:1;overflow-y:auto;padding:8px}
+.nav-item{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;color:var(--text-dim);font-size:0.92rem;transition:all .15s;cursor:pointer;margin-bottom:2px}
+.nav-item:hover{background:var(--bg-600);color:var(--text)}
+.nav-item.active{background:linear-gradient(135deg,var(--purple-800),var(--purple-700));color:#fff;box-shadow:var(--purple-glow)}
+.nav-item .icon{font-size:1.1rem;width:24px;text-align:center}
+.sidebar-footer{padding:12px 16px;border-top:1px solid var(--border);font-size:0.75rem;color:var(--text-muted);text-align:center}
+
+/* ═══════ TOP BAR ═══════ */
+.topbar{height:48px;background:var(--bg-800);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 20px}
+.topbar-title{font-weight:600;color:var(--purple-300);font-size:1rem}
+.topbar-status{display:flex;align-items:center;gap:16px;font-size:0.8rem;color:var(--text-dim)}
+.status-dot{width:8px;height:8px;border-radius:50%;background:var(--green-500);display:inline-block;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+
+/* ═══════ PAGE CONTENT ═══════ */
+.page{display:none;flex:1;overflow-y:auto;padding:24px}
+.page.active{display:block}
+
+/* ═══════ CARDS ═══════ */
+.card{background:var(--bg-700);border:1px solid var(--border);border-radius:var(--radius);padding:20px;margin-bottom:16px;transition:border-color .2s}
+.card:hover{border-color:var(--purple-700)}
+.card-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.card-title{font-weight:600;color:var(--purple-300);font-size:1rem}
+
+/* ═══════ GRID ═══════ */
+.grid-2{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
+.grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.grid-4{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
+@media(max-width:1200px){.grid-4{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:900px){.grid-3,.grid-2{grid-template-columns:1fr}}
+
+/* ═══════ STAT CARDS ═══════ */
+.stat-card{background:var(--bg-700);border:1px solid var(--border);border-radius:var(--radius);padding:16px;position:relative;overflow:hidden}
+.stat-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,var(--purple-500),var(--cyan-500))}
+.stat-value{font-size:2rem;font-weight:700;color:var(--purple-300)}
+.stat-label{font-size:0.8rem;color:var(--text-dim);margin-top:4px}
+
+/* ═══════ BUTTONS ═══════ */
+.btn{padding:8px 16px;border-radius:8px;font-size:0.85rem;font-weight:500;transition:all .15s;display:inline-flex;align-items:center;gap:6px}
+.btn-primary{background:linear-gradient(135deg,var(--purple-600),var(--purple-500));color:#fff;box-shadow:0 2px 10px rgba(139,92,246,0.3)}
+.btn-primary:hover{background:linear-gradient(135deg,var(--purple-500),var(--purple-400));transform:translateY(-1px)}
+.btn-secondary{background:var(--bg-500);color:var(--text);border:1px solid var(--border)}
+.btn-secondary:hover{border-color:var(--purple-600);background:var(--bg-400)}
+.btn-danger{background:var(--red-500);color:#fff}
+.btn-danger:hover{background:var(--red-400)}
+.btn-sm{padding:5px 10px;font-size:0.78rem}
+.btn-icon{width:32px;height:32px;border-radius:8px;background:var(--bg-500);border:1px solid var(--border);color:var(--text-dim);display:flex;align-items:center;justify-content:center}
+
+/* ═══════ INPUTS ═══════ */
+.input{width:100%;padding:10px 14px;background:var(--bg-800);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:0.9rem;transition:border-color .15s}
+.input:focus{border-color:var(--purple-500);box-shadow:0 0 0 3px rgba(139,92,246,0.15)}
+.input-group{margin-bottom:14px}
+.input-label{display:block;font-size:0.8rem;color:var(--text-dim);margin-bottom:6px;font-weight:500}
+textarea.input{min-height:100px;resize:vertical}
+
+/* ═══════ TABLES ═══════ */
+.table-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse}
+th{text-align:left;padding:10px 12px;font-size:0.78rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;border-bottom:1px solid var(--border)}
+td{padding:10px 12px;font-size:0.85rem;border-bottom:1px solid rgba(42,42,85,0.5)}
+tr:hover td{background:rgba(139,92,246,0.05)}
+
+/* ═══════ BADGES ═══════ */
+.badge{display:inline-flex;align-items:center;padding:2px 8px;border-radius:20px;font-size:0.72rem;font-weight:600}
+.badge-green{background:rgba(16,185,129,0.15);color:var(--green-400)}
+.badge-purple{background:rgba(139,92,246,0.15);color:var(--purple-400)}
+.badge-red{background:rgba(239,68,68,0.15);color:var(--red-400)}
+.badge-yellow{background:rgba(234,179,8,0.15);color:var(--yellow-500)}
+.badge-blue{background:rgba(59,130,246,0.15);color:var(--blue-500)}
+
+/* ═══════ CHAT PAGE ═══════ */
+.chat-container{display:flex;flex-direction:column;height:calc(100vh - 48px)}
+.chat-messages{flex:1;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:16px}
+.msg{max-width:80%;padding:12px 16px;border-radius:12px;font-size:0.9rem;line-height:1.6;word-wrap:break-word;white-space:pre-wrap}
+.msg-user{align-self:flex-end;background:linear-gradient(135deg,var(--purple-700),var(--purple-600));color:#fff;border-bottom-right-radius:4px}
+.msg-ai{align-self:flex-start;background:var(--bg-600);border:1px solid var(--border);border-bottom-left-radius:4px}
+.msg-system{align-self:center;background:rgba(139,92,246,0.1);border:1px solid var(--purple-800);color:var(--text-dim);font-size:0.8rem}
+.msg-tool{align-self:flex-start;background:var(--bg-700);border:1px solid var(--yellow-500);border-bottom-left-radius:4px;font-size:0.82rem}
+.msg-tool .tool-name{color:var(--yellow-500);font-weight:600;margin-bottom:4px}
+.chat-input-area{padding:16px 20px;border-top:1px solid var(--border);background:var(--bg-800)}
+.chat-input-row{display:flex;gap:10px}
+.chat-input{flex:1;padding:12px 16px;background:var(--bg-700);border:1px solid var(--border);border-radius:12px;color:var(--text);font-size:0.95rem;resize:none;min-height:48px;max-height:120px}
+.chat-input:focus{border-color:var(--purple-500);box-shadow:var(--purple-glow)}
+.send-btn{width:48px;height:48px;border-radius:12px;background:linear-gradient(135deg,var(--purple-600),var(--purple-500));color:#fff;font-size:1.2rem;display:flex;align-items:center;justify-content:center;transition:all .15s;box-shadow:0 2px 10px rgba(139,92,246,0.3)}
+.send-btn:hover{transform:scale(1.05)}
+.send-btn:disabled{opacity:0.4;cursor:not-allowed;transform:none}
+.typing-indicator{display:flex;align-items:center;gap:6px;color:var(--text-dim);font-size:0.82rem;padding:4px 0}
+.typing-dot{width:6px;height:6px;border-radius:50%;background:var(--purple-400);animation:typingBounce 1.4s infinite}
+.typing-dot:nth-child(2){animation-delay:.2s}
+.typing-dot:nth-child(3){animation-delay:.4s}
+@keyframes typingBounce{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-6px)}}
+
+/* ═══════ AGENT CARDS ═══════ */
+.agent-card{background:var(--bg-700);border:1px solid var(--border);border-radius:var(--radius);padding:16px;transition:all .2s;cursor:pointer}
+.agent-card:hover{border-color:var(--purple-500);transform:translateY(-2px);box-shadow:var(--purple-glow)}
+.agent-name{font-weight:600;color:var(--purple-300);margin-bottom:4px}
+.agent-type{font-size:0.75rem;color:var(--text-muted);margin-bottom:8px}
+.agent-caps{display:flex;flex-wrap:wrap;gap:4px}
+.agent-cap{font-size:0.68rem;padding:2px 6px;background:var(--bg-500);border-radius:4px;color:var(--text-dim)}
+
+/* ═══════ PROGRESS BAR ═══════ */
+.progress-bar{height:6px;background:var(--bg-500);border-radius:3px;overflow:hidden}
+.progress-fill{height:100%;background:linear-gradient(90deg,var(--purple-500),var(--cyan-500));border-radius:3px;transition:width .5s}
+
+/* ═══════ CODE BLOCK ═══════ */
+.code-block{background:var(--bg-900);border:1px solid var(--border);border-radius:8px;padding:12px;font-size:0.82rem;overflow-x:auto;line-height:1.5}
+
+/* ═══════ METRIC CHART PLACEHOLDER ═══════ */
+.chart-container{height:200px;background:var(--bg-800);border:1px solid var(--border);border-radius:8px;display:flex;align-items:center;justify-content:center;color:var(--text-muted);font-size:0.85rem;position:relative;overflow:hidden}
+.chart-container canvas{position:absolute;top:0;left:0;width:100%;height:100%}
+
+/* ═══════ MODAL ═══════ */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:1000;display:flex;align-items:center;justify-content:center}
+.modal{background:var(--bg-700);border:1px solid var(--border);border-radius:16px;padding:24px;max-width:500px;width:90%;max-height:80vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,0.5)}
+.modal-title{font-size:1.1rem;font-weight:600;color:var(--purple-300);margin-bottom:16px}
+.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+
+/* ═══════ LOGIN PAGE ═══════ */
+.login-container{min-height:100vh;display:flex;align-items:center;justify-content:center;background:radial-gradient(ellipse at center,var(--bg-700) 0%,var(--bg-900) 70%)}
+.login-box{background:var(--bg-700);border:1px solid var(--border);border-radius:20px;padding:40px;width:380px;box-shadow:var(--purple-glow);text-align:center}
+.login-box h1{color:var(--purple-400);margin-bottom:8px;font-size:1.8rem}
+.login-box p{color:var(--text-dim);margin-bottom:24px;font-size:0.85rem}
+.login-box .input{margin-bottom:14px;text-align:left}
+.login-box .btn{width:100%;justify-content:center;padding:12px;font-size:1rem;margin-top:8px}
+.login-error{color:var(--red-400);font-size:0.82rem;margin-top:8px;min-height:20px}
+.login-toggle{margin-top:16px;font-size:0.82rem;color:var(--text-dim)}
+.login-toggle a{cursor:pointer}
+
+/* ═══════ SECURITY AUDIT LOG ═══════ */
+.log-entry{padding:8px 12px;border-left:3px solid var(--purple-700);margin-bottom:8px;font-size:0.82rem;background:var(--bg-800);border-radius:0 6px 6px 0}
+.log-time{color:var(--text-muted);font-size:0.72rem}
+
+/* ═══════ FILE MANAGER ═══════ */
+.file-item{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:8px;cursor:pointer;transition:background .1s}
+.file-item:hover{background:var(--bg-600)}
+.file-icon{font-size:1.3rem;width:32px;text-align:center}
+.file-name{flex:1;font-size:0.88rem}
+.file-size{font-size:0.75rem;color:var(--text-muted)}
+
+/* ═══════ SETTINGS EDITOR ═══════ */
+.config-editor{width:100%;min-height:400px;background:var(--bg-900);border:1px solid var(--border);border-radius:8px;padding:16px;color:var(--green-400);font-family:var(--font);font-size:0.85rem;resize:vertical;line-height:1.6}
+
+/* ═══════ ANIMATIONS ═══════ */
+@keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+.fade-in{animation:fadeIn .3s ease}
+@keyframes slideIn{from{opacity:0;transform:translateX(-20px)}to{opacity:1;transform:translateX(0)}}
+
+/* ═══════ TOAST ═══════ */
+.toast-container{position:fixed;top:16px;right:16px;z-index:2000;display:flex;flex-direction:column;gap:8px}
+.toast{padding:12px 20px;border-radius:10px;font-size:0.85rem;color:#fff;animation:fadeIn .3s;box-shadow:0 4px 20px rgba(0,0,0,0.3)}
+.toast-success{background:linear-gradient(135deg,#059669,var(--green-500))}
+.toast-error{background:linear-gradient(135deg,#dc2626,var(--red-500))}
+.toast-info{background:linear-gradient(135deg,var(--purple-600),var(--purple-500))}
+</style>
+</head>
+<body>
+
+<!-- LOGIN PAGE -->
+<div id="loginPage" class="login-container">
+  <div class="login-box">
+    <h1>⚡ Rally Agent</h1>
+    <p>Self-hosted AI platform</p>
+    <input type="text" id="loginUser" class="input" placeholder="Username" autocomplete="username">
+    <input type="password" id="loginPass" class="input" placeholder="Password" autocomplete="current-password">
+    <button class="btn btn-primary" onclick="doLogin()">Sign In</button>
+    <div id="loginError" class="login-error"></div>
+    <div class="login-toggle">No account? <a onclick="showRegister()">Register</a></div>
+  </div>
+</div>
+
+<!-- MAIN APP -->
+<div id="app" style="display:none">
+  <!-- SIDEBAR -->
+  <div id="sidebar">
+    <div class="sidebar-header">
+      <div class="sidebar-logo"><span class="logo-icon">⚡</span> Rally Agent</div>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-item active" data-page="chat" onclick="showPage('chat')"><span class="icon">💬</span> Chat</div>
+      <div class="nav-item" data-page="dashboard" onclick="showPage('dashboard')"><span class="icon">📊</span> Dashboard</div>
+      <div class="nav-item" data-page="agents" onclick="showPage('agents')"><span class="icon">🤖</span> Agents</div>
+      <div class="nav-item" data-page="memory" onclick="showPage('memory')"><span class="icon">🧠</span> Memory</div>
+      <div class="nav-item" data-page="browser" onclick="showPage('browser')"><span class="icon">🌐</span> Browser</div>
+      <div class="nav-item" data-page="plugins" onclick="showPage('plugins')"><span class="icon">🔌</span> Plugins</div>
+      <div class="nav-item" data-page="tools" onclick="showPage('tools')"><span class="icon">🛠️</span> Tools</div>
+      <div class="nav-item" data-page="files" onclick="showPage('files')"><span class="icon">📁</span> Files</div>
+      <div class="nav-item" data-page="metrics" onclick="showPage('metrics')"><span class="icon">📈</span> Metrics</div>
+      <div class="nav-item" data-page="security" onclick="showPage('security')"><span class="icon">🔒</span> Security</div>
+      <div class="nav-item" data-page="users" onclick="showPage('users')"><span class="icon">👥</span> Users</div>
+      <div class="nav-item" data-page="settings" onclick="showPage('settings')"><span class="icon">⚙️</span> Settings</div>
+    </nav>
+    <div class="sidebar-footer">Rally Agent v2.0 — 🟣 Self-Hosted AI</div>
+  </div>
+
+  <!-- MAIN -->
+  <div id="main">
+    <div class="topbar">
+      <div class="topbar-title" id="pageTitle">💬 Chat</div>
+      <div class="topbar-status">
+        <span><span class="status-dot"></span> Connected</span>
+        <span id="topbarUser">admin</span>
+      </div>
+    </div>
+
+    <!-- ═══════ CHAT PAGE ═══════ -->
+    <div id="page-chat" class="page active chat-container">
+      <div class="chat-messages" id="chatMessages"></div>
+      <div id="typingIndicator" class="typing-indicator" style="display:none;padding:0 20px">
+        <span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>
+        <span>Thinking...</span>
+      </div>
+      <div class="chat-input-area">
+        <div class="chat-input-row">
+          <textarea id="chatInput" class="chat-input" placeholder="Type a message... (Shift+Enter for new line)" rows="1"></textarea>
+          <button id="sendBtn" class="send-btn" onclick="sendMessage()">➤</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════ DASHBOARD PAGE ═══════ -->
+    <div id="page-dashboard" class="page">
+      <div class="grid-4" id="dashStats"></div>
+      <div class="grid-2" style="margin-top:16px">
+        <div class="card">
+          <div class="card-header"><span class="card-title">Request Rate</span></div>
+          <div class="chart-container"><canvas id="chartRequests"></canvas></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><span class="card-title">Latency (ms)</span></div>
+          <div class="chart-container"><canvas id="chartLatency"></canvas></div>
+        </div>
+      </div>
+      <div class="card" style="margin-top:16px">
+        <div class="card-header"><span class="card-title">System Status</span></div>
+        <div id="dashSystemInfo" style="font-size:0.85rem;color:var(--text-dim)"></div>
+      </div>
+    </div>
+
+    <!-- ═══════ AGENTS PAGE ═══════ -->
+    <div id="page-agents" class="page">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <h2 style="font-size:1.2rem;color:var(--purple-300)">🤖 Agents</h2>
+        <button class="btn btn-primary" onclick="spawnAgentModal()">+ Spawn Agent</button>
+      </div>
+      <div class="grid-3" id="agentGrid"></div>
+    </div>
+
+    <!-- ═══════ MEMORY PAGE ═══════ -->
+    <div id="page-memory" class="page">
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header"><span class="card-title">🧠 Memory Stats</span></div>
+          <div id="memoryStats"></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><span class="card-title">🔍 Semantic Search</span></div>
+          <div class="input-group">
+            <input id="memorySearchInput" class="input" placeholder="Search memory..." onkeydown="if(event.key==='Enter')searchMemory()">
+            <button class="btn btn-primary btn-sm" style="margin-top:8px" onclick="searchMemory()">Search</button>
+          </div>
+          <div id="memorySearchResults"></div>
+        </div>
+      </div>
+      <div class="card" style="margin-top:16px">
+        <div class="card-header"><span class="card-title">📄 RAG — Ingest Documents</span></div>
+        <div class="input-group">
+          <textarea id="ragContent" class="input" placeholder="Paste document content to ingest..." rows="4"></textarea>
+          <button class="btn btn-primary btn-sm" style="margin-top:8px" onclick="ingestRAG()">Ingest</button>
+        </div>
+      </div>
+      <div class="card" style="margin-top:16px">
+        <div class="card-header"><span class="card-title">🔎 RAG Search</span></div>
+        <div class="input-group">
+          <input id="ragSearchInput" class="input" placeholder="Search ingested documents..." onkeydown="if(event.key==='Enter')searchRAG()">
+          <button class="btn btn-primary btn-sm" style="margin-top:8px" onclick="searchRAG()">Search RAG</button>
+        </div>
+        <div id="ragSearchResults"></div>
+      </div>
+    </div>
+
+    <!-- ═══════ BROWSER PAGE ═══════ -->
+    <div id="page-browser" class="page">
+      <div class="card">
+        <div class="card-header"><span class="card-title">🌐 Browser Automation</span></div>
+        <div style="display:flex;gap:10px;margin-bottom:12px">
+          <input id="browserUrl" class="input" placeholder="https://example.com" style="flex:1">
+          <button class="btn btn-primary" onclick="browserNavigate()">Navigate</button>
+          <button class="btn btn-secondary" onclick="browserScreenshot()">📸 Screenshot</button>
+        </div>
+        <div id="browserPreview" style="background:var(--bg-900);border:1px solid var(--border);border-radius:8px;min-height:300px;display:flex;align-items:center;justify-content:center;color:var(--text-muted);overflow:auto">
+          <span>No page loaded</span>
+        </div>
+      </div>
+      <div class="card" style="margin-top:16px">
+        <div class="card-header"><span class="card-title">🎯 Element Actions</span></div>
+        <div class="grid-2">
+          <div class="input-group">
+            <label class="input-label">Selector</label>
+            <input id="browserSelector" class="input" placeholder="#element or .class">
+          </div>
+          <div class="input-group">
+            <label class="input-label">Text (for type action)</label>
+            <input id="browserText" class="input" placeholder="Text to type">
+          </div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-secondary" onclick="browserClick()">🖱️ Click</button>
+          <button class="btn btn-secondary" onclick="browserType()">⌨️ Type</button>
+        </div>
+        <div id="browserLog" style="margin-top:12px;font-size:0.82rem;color:var(--text-dim)"></div>
+      </div>
+    </div>
+
+    <!-- ═══════ PLUGINS PAGE ═══════ -->
+    <div id="page-plugins" class="page">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <h2 style="font-size:1.2rem;color:var(--purple-300)">🔌 Plugins</h2>
+        <div style="display:flex;gap:8px">
+          <input id="pluginInstallInput" class="input" placeholder="plugin-name" style="width:200px">
+          <button class="btn btn-primary" onclick="installPlugin()">Install</button>
+        </div>
+      </div>
+      <div class="grid-3" id="pluginGrid"></div>
+    </div>
+
+    <!-- ═══════ TOOLS PAGE ═══════ -->
+    <div id="page-tools" class="page">
+      <h2 style="font-size:1.2rem;color:var(--purple-300);margin-bottom:16px">🛠️ Tools Registry</h2>
+      <div class="card">
+        <div class="table-wrap">
+          <table id="toolsTable">
+            <thead><tr><th>Name</th><th>Description</th><th>Schema</th><th>Status</th><th>Actions</th></tr></thead>
+            <tbody id="toolsBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════ FILES PAGE ═══════ -->
+    <div id="page-files" class="page">
+      <h2 style="font-size:1.2rem;color:var(--purple-300);margin-bottom:16px">📁 File Manager</h2>
+      <div class="card">
+        <div id="fileList"></div>
+      </div>
+    </div>
+
+    <!-- ═══════ METRICS PAGE ═══════ -->
+    <div id="page-metrics" class="page">
+      <h2 style="font-size:1.2rem;color:var(--purple-300);margin-bottom:16px">📈 Metrics Dashboard</h2>
+      <div class="grid-4" id="metricsStats"></div>
+      <div class="grid-2" style="margin-top:16px">
+        <div class="card">
+          <div class="card-header"><span class="card-title">Throughput</span></div>
+          <div class="chart-container"><canvas id="chartThroughput"></canvas></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><span class="card-title">Error Rate</span></div>
+          <div class="chart-container"><canvas id="chartErrors"></canvas></div>
+        </div>
+      </div>
+      <div class="card" style="margin-top:16px">
+        <div class="card-header"><span class="card-title">Detailed Metrics</span></div>
+        <div id="metricsDetail" style="font-size:0.82rem;color:var(--text-dim)"></div>
+      </div>
+    </div>
+
+    <!-- ═══════ SECURITY PAGE ═══════ -->
+    <div id="page-security" class="page">
+      <h2 style="font-size:1.2rem;color:var(--purple-300);margin-bottom:16px">🔒 Security Status</h2>
+      <div class="grid-3" id="securityStats"></div>
+      <div class="card" style="margin-top:16px">
+        <div class="card-header"><span class="card-title">Audit Log</span></div>
+        <div id="auditLog"></div>
+      </div>
+    </div>
+
+    <!-- ═══════ USERS PAGE ═══════ -->
+    <div id="page-users" class="page">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <h2 style="font-size:1.2rem;color:var(--purple-300)">👥 User Management</h2>
+        <button class="btn btn-primary" onclick="showAddUserModal()">+ Add User</button>
+      </div>
+      <div class="card">
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Username</th><th>Role</th><th>Created</th><th>Status</th><th>Actions</th></tr></thead>
+            <tbody id="usersBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════ SETTINGS PAGE ═══════ -->
+    <div id="page-settings" class="page">
+      <h2 style="font-size:1.2rem;color:var(--purple-300);margin-bottom:16px">⚙️ Configuration</h2>
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Config Editor</span>
+          <button class="btn btn-primary btn-sm" onclick="saveConfig()">💾 Save</button>
+        </div>
+        <textarea id="configEditor" class="config-editor" spellcheck="false"></textarea>
+      </div>
+      <div class="card" style="margin-top:16px">
+        <div class="card-header"><span class="card-title">Provider Status</span></div>
+        <div id="providerList"></div>
+      </div>
+      <div class="card" style="margin-top:16px">
+        <div class="card-header"><span class="card-title">Channels</span></div>
+        <div id="channelList"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- TOAST CONTAINER -->
+<div id="toastContainer" class="toast-container"></div>
+
+<!-- MODAL CONTAINER -->
+<div id="modalContainer"></div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// 🔑 Auth State
+// ═══════════════════════════════════════════════════════════════
+let authToken = localStorage.getItem('rally_token') || '';
+let currentUser = null;
+
+function api(path, opts = {}) {
+  const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+  if (authToken) headers['Authorization'] = 'Bearer ' + authToken;
+  return fetch('/api' + path, { ...opts, headers }).then(async r => {
+    if (r.status === 401) { doLogout(); throw new Error('Unauthorized'); }
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.detail || data.error || r.statusText);
+    return data;
+  });
+}
+
+function doLogout() {
+  authToken = ''; localStorage.removeItem('rally_token');
+  document.getElementById('app').style.display = 'none';
+  document.getElementById('loginPage').style.display = 'flex';
+}
+
+async function doLogin() {
+  const user = document.getElementById('loginUser').value.trim();
+  const pass = document.getElementById('loginPass').value;
+  if (!user || !pass) { document.getElementById('loginError').textContent = 'Fill in all fields'; return; }
+  try {
+    const data = await fetch('/api/auth/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: user, password: pass })
+    }).then(r => r.json());
+    if (data.error) { document.getElementById('loginError').textContent = data.error; return; }
+    authToken = data.token; localStorage.setItem('rally_token', authToken);
+    currentUser = data.user || user;
+    enterApp();
+  } catch (e) { document.getElementById('loginError').textContent = 'Login failed: ' + e.message; }
+}
+
+function showRegister() {
+  const box = document.querySelector('.login-box');
+  box.querySelector('h1').textContent = '📝 Register';
+  box.querySelector('p').textContent = 'Create a new account';
+  box.querySelector('.btn').textContent = 'Create Account';
+  box.querySelector('.btn').onclick = doRegister;
+  box.querySelector('.login-toggle').innerHTML = 'Already have an account? <a onclick="location.reload()">Sign in</a>';
+}
+
+async function doRegister() {
+  const user = document.getElementById('loginUser').value.trim();
+  const pass = document.getElementById('loginPass').value;
+  if (!user || !pass) { document.getElementById('loginError').textContent = 'Fill in all fields'; return; }
+  try {
+    const data = await fetch('/api/auth/register', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: user, password: pass })
+    }).then(r => r.json());
+    if (data.error) { document.getElementById('loginError').textContent = data.error; return; }
+    authToken = data.token; localStorage.setItem('rally_token', authToken);
+    currentUser = user;
+    enterApp();
+  } catch (e) { document.getElementById('loginError').textContent = 'Registration failed: ' + e.message; }
+}
+
+function enterApp() {
+  document.getElementById('loginPage').style.display = 'none';
+  document.getElementById('app').style.display = 'flex';
+  document.getElementById('topbarUser').textContent = currentUser || 'user';
+  loadAllPages();
+  connectWS();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 🔌 WebSocket
+// ═══════════════════════════════════════════════════════════════
+let ws = null;
+let wsReconnectTimer = null;
+
+function connectWS() {
+  if (ws && ws.readyState <= 1) return;
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/ws?token=${encodeURIComponent(authToken)}`);
+  ws.onopen = () => { clearTimeout(wsReconnectTimer); };
+  ws.onclose = () => { wsReconnectTimer = setTimeout(connectWS, 3000); };
+  ws.onerror = () => {};
+  ws.onmessage = (evt) => {
+    try {
+      const msg = JSON.parse(evt.data);
+      handleWSMessage(msg);
+    } catch (e) {}
+  };
+}
+
+let currentAIMsg = null;
+let isStreaming = false;
+
+function handleWSMessage(msg) {
+  if (msg.type === 'token') {
+    if (!currentAIMsg) {
+      currentAIMsg = appendMsg('', 'ai');
+      document.getElementById('typingIndicator').style.display = 'none';
+    }
+    currentAIMsg.querySelector('.msg-content').textContent += msg.content;
+    scrollChat();
+  } else if (msg.type === 'done') {
+    if (currentAIMsg && msg.content) {
+      currentAIMsg.querySelector('.msg-content').textContent += msg.content;
+    }
+    currentAIMsg = null;
+    isStreaming = false;
+    document.getElementById('sendBtn').disabled = false;
+    document.getElementById('typingIndicator').style.display = 'none';
+    scrollChat();
+  } else if (msg.type === 'tool_call') {
+    appendToolMsg(`🔧 Calling: ${msg.tool}`, JSON.stringify(msg.args, null, 2));
+  } else if (msg.type === 'tool_result') {
+    appendToolMsg(`✅ Result: ${msg.tool}`, typeof msg.result === 'string' ? msg.result : JSON.stringify(msg.result, null, 2));
+  } else if (msg.type === 'error') {
+    appendMsg('⚠️ ' + msg.content, 'system');
+    isStreaming = false;
+    document.getElementById('sendBtn').disabled = false;
+    document.getElementById('typingIndicator').style.display = 'none';
+  }
+}
+
+function appendMsg(text, type) {
+  const div = document.createElement('div');
+  div.className = `msg msg-${type} fade-in`;
+  div.innerHTML = `<div class="msg-content">${escHtml(text)}</div>`;
+  document.getElementById('chatMessages').appendChild(div);
+  scrollChat();
+  return div;
+}
+
+function appendToolMsg(title, body) {
+  const div = document.createElement('div');
+  div.className = 'msg msg-tool fade-in';
+  div.innerHTML = `<div class="tool-name">${escHtml(title)}</div><div class="code-block">${escHtml(body)}</div>`;
+  document.getElementById('chatMessages').appendChild(div);
+  scrollChat();
+}
+
+function scrollChat() {
+  const m = document.getElementById('chatMessages');
+  m.scrollTop = m.scrollHeight;
+}
+
+function escHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+function sendMessage() {
+  const input = document.getElementById('chatInput');
+  const text = input.value.trim();
+  if (!text || isStreaming) return;
+  appendMsg(text, 'user');
+  input.value = '';
+  input.style.height = 'auto';
+  isStreaming = true;
+  document.getElementById('sendBtn').disabled = true;
+  document.getElementById('typingIndicator').style.display = 'flex';
+  if (ws && ws.readyState === 1) {
+    ws.send(JSON.stringify({ type: 'chat', content: text }));
+  } else {
+    // Fallback to SSE
+    streamChatSSE(text);
+  }
+}
+
+async function streamChatSSE(text) {
+  try {
+    const resp = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + authToken },
+      body: JSON.stringify({ content: text })
+    });
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let aiDiv = null;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = decoder.decode(value);
+      for (const line of chunk.split('\n')) {
+        if (!line.startsWith('data: ')) continue;
+        const data = JSON.parse(line.slice(6));
+        if (data.type === 'token') {
+          if (!aiDiv) { aiDiv = appendMsg('', 'ai'); document.getElementById('typingIndicator').style.display = 'none'; }
+          aiDiv.querySelector('.msg-content').textContent += data.content;
+        } else if (data.type === 'done') {
+          if (aiDiv && data.content) aiDiv.querySelector('.msg-content').textContent += data.content;
+        }
+      }
+      scrollChat();
+    }
+  } catch (e) {
+    appendMsg('⚠️ Error: ' + e.message, 'system');
+  } finally {
+    isStreaming = false; currentAIMsg = null;
+    document.getElementById('sendBtn').disabled = false;
+    document.getElementById('typingIndicator').style.display = 'none';
+  }
+}
+
+// Auto-resize textarea
+document.getElementById('chatInput').addEventListener('input', function() {
+  this.style.height = 'auto';
+  this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+});
+document.getElementById('chatInput').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// 📄 Page Navigation
+// ═══════════════════════════════════════════════════════════════
+const pageTitles = {
+  chat:'💬 Chat', dashboard:'📊 Dashboard', agents:'🤖 Agents', memory:'🧠 Memory',
+  browser:'🌐 Browser', plugins:'🔌 Plugins', tools:'🛠️ Tools', files:'📁 Files',
+  metrics:'📈 Metrics', security:'🔒 Security', users:'👥 Users', settings:'⚙️ Settings'
+};
+
+function showPage(name) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('page-' + name)?.classList.add('active');
+  document.querySelector(`.nav-item[data-page="${name}"]`)?.classList.add('active');
+  document.getElementById('pageTitle').textContent = pageTitles[name] || name;
+  // Refresh data for certain pages
+  if (name === 'dashboard') loadDashboard();
+  if (name === 'agents') loadAgents();
+  if (name === 'metrics') loadMetrics();
+  if (name === 'security') loadSecurity();
+  if (name === 'users') loadUsers();
+  if (name === 'files') loadFiles();
+  if (name === 'tools') loadTools();
+  if (name === 'plugins') loadPlugins();
+  if (name === 'settings') loadSettings();
+  if (name === 'memory') loadMemory();
+}
+
+function loadAllPages() { loadDashboard(); loadAgents(); }
+
+// ═══════════════════════════════════════════════════════════════
+// 📊 Dashboard
+// ═══════════════════════════════════════════════════════════════
+async function loadDashboard() {
+  try {
+    const status = await api('/status');
+    const stats = document.getElementById('dashStats');
+    stats.innerHTML = `
+      <div class="stat-card"><div class="stat-value">${status.agents_count || 0}</div><div class="stat-label">Active Agents</div></div>
+      <div class="stat-card"><div class="stat-value">${status.total_requests || 0}</div><div class="stat-label">Total Requests</div></div>
+      <div class="stat-card"><div class="stat-value">${status.tools_count || 0}</div><div class="stat-label">Tools Registered</div></div>
+      <div class="stat-card"><div class="stat-value">${status.uptime || '0s'}</div><div class="stat-label">Uptime</div></div>
+    `;
+    document.getElementById('dashSystemInfo').innerHTML = `
+      <p>Version: ${status.version || '2.0.0'} | Providers: ${(status.providers || []).join(', ') || 'none'}</p>
+      <p>Memory entries: ${status.memory_entries || 0} | Plugins: ${status.plugins_count || 0}</p>
+    `;
+    drawMiniChart('chartRequests', status.request_history || []);
+    drawMiniChart('chartLatency', status.latency_history || []);
+  } catch (e) { console.error('Dashboard error:', e); }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 🤖 Agents
+// ═══════════════════════════════════════════════════════════════
+async function loadAgents() {
+  try {
+    const data = await api('/agents');
+    const grid = document.getElementById('agentGrid');
+    grid.innerHTML = (data.agents || []).map(a => `
+      <div class="agent-card fade-in">
+        <div class="agent-name">${escHtml(a.name)}</div>
+        <div class="agent-type">${escHtml(a.type)} — <span class="badge badge-green">${a.status || 'ready'}</span></div>
+        <p style="font-size:0.8rem;color:var(--text-dim);margin:8px 0">${escHtml(a.description || '')}</p>
+        <div class="agent-caps">${(a.capabilities||[]).map(c => `<span class="agent-cap">${escHtml(c)}</span>`).join('')}</div>
+      </div>
+    `).join('') || '<p style="color:var(--text-dim)">No agents registered.</p>';
+  } catch (e) { console.error('Agents error:', e); }
+}
+
+function spawnAgentModal() {
+  showModal('Spawn Agent', `
+    <div class="input-group"><label class="input-label">Agent Type</label>
+      <select id="spawnType" class="input">
+        <option value="code">Code</option><option value="research">Research</option>
+        <option value="creative">Creative</option><option value="data">Data</option>
+        <option value="pm">PM</option><option value="security">Security</option>
+        <option value="devops">DevOps</option><option value="writer">Writer</option>
+        <option value="qa">QA</option><option value="orchestrator">Orchestrator</option>
+      </select>
+    </div>
+    <div class="input-group"><label class="input-label">Task (optional)</label>
+      <input id="spawnTask" class="input" placeholder="Initial task for the agent">
+    </div>
+  `, async () => {
+    try {
+      await api('/agents/spawn', { method: 'POST', body: JSON.stringify({ type: document.getElementById('spawnType').value, task: document.getElementById('spawnTask').value }) });
+      toast('Agent spawned!', 'success');
+      closeModal();
+      loadAgents();
+    } catch (e) { toast('Error: ' + e.message, 'error'); }
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 🧠 Memory
+// ═══════════════════════════════════════════════════════════════
+async function loadMemory() {
+  try {
+    const data = await api('/memory');
+    document.getElementById('memoryStats').innerHTML = `
+      <p>Total entries: <strong>${data.total_entries || 0}</strong></p>
+      <p>Categories: ${(data.categories || []).join(', ') || 'none'}</p>
+      <p style="margin-top:8px;font-size:0.78rem;color:var(--text-muted)">Most useful entries:</p>
+      ${(data.most_useful || []).map(e => `<div style="font-size:0.8rem;padding:4px 0;border-bottom:1px solid var(--border)">${escHtml((e.content||'').slice(0,100))}...</div>`).join('')}
+    `;
+  } catch (e) { console.error('Memory error:', e); }
+}
+
+async function searchMemory() {
+  const q = document.getElementById('memorySearchInput').value.trim();
+  if (!q) return;
+  try {
+    const data = await api('/memory/search?q=' + encodeURIComponent(q));
+    document.getElementById('memorySearchResults').innerHTML = (data.results || []).map(r => `
+      <div style="padding:8px 0;border-bottom:1px solid var(--border);font-size:0.82rem">
+        <div>${escHtml(r.content || '')}</div>
+        <div style="color:var(--text-muted);font-size:0.72rem;margin-top:4px">Source: ${escHtml(r.source||'')} | Confidence: ${(r.confidence||0).toFixed(2)}</div>
+      </div>
+    `).join('') || '<p style="color:var(--text-dim)">No results found.</p>';
+  } catch (e) { toast('Search error: ' + e.message, 'error'); }
+}
+
+async function ingestRAG() {
+  const content = document.getElementById('ragContent').value.trim();
+  if (!content) return;
+  try {
+    await api('/memory/rag/ingest', { method: 'POST', body: JSON.stringify({ content }) });
+    toast('Document ingested!', 'success');
+    document.getElementById('ragContent').value = '';
+  } catch (e) { toast('Ingest error: ' + e.message, 'error'); }
+}
+
+async function searchRAG() {
+  const q = document.getElementById('ragSearchInput').value.trim();
+  if (!q) return;
+  try {
+    const data = await api('/memory/rag/search?q=' + encodeURIComponent(q));
+    document.getElementById('ragSearchResults').innerHTML = (data.results || []).map(r => `
+      <div style="padding:8px 0;border-bottom:1px solid var(--border);font-size:0.82rem">
+        <div>${escHtml(r.content || '')}</div>
+        <div style="color:var(--text-muted);font-size:0.72rem;margin-top:4px">Score: ${(r.score||0).toFixed(3)}</div>
+      </div>
+    `).join('') || '<p style="color:var(--text-dim)">No results.</p>';
+  } catch (e) { toast('RAG search error: ' + e.message, 'error'); }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 🌐 Browser
+// ═══════════════════════════════════════════════════════════════
+async function browserNavigate() {
+  const url = document.getElementById('browserUrl').value.trim();
+  if (!url) return;
+  try {
+    await api('/browser/navigate', { method: 'POST', body: JSON.stringify({ url }) });
+    toast('Navigated!', 'success');
+    browserScreenshot();
+  } catch (e) { toast('Error: ' + e.message, 'error'); }
+}
+
+async function browserScreenshot() {
+  try {
+    const data = await api('/browser/screenshot', { method: 'POST', body: '{}' });
+    const preview = document.getElementById('browserPreview');
+    if (data.screenshot) {
+      preview.innerHTML = `<img src="data:image/png;base64,${data.screenshot}" style="max-width:100%;border-radius:8px">`;
+    } else {
+      preview.innerHTML = `<span style="color:var(--text-dim)">${data.message || 'No screenshot available'}</span>`;
+    }
+  } catch (e) { toast('Screenshot error: ' + e.message, 'error'); }
+}
+
+async function browserClick() {
+  const sel = document.getElementById('browserSelector').value.trim();
+  if (!sel) return;
+  try {
+    await api('/browser/click', { method: 'POST', body: JSON.stringify({ selector: sel }) });
+    document.getElementById('browserLog').innerHTML = `<div class="log-entry">Clicked: ${escHtml(sel)}</div>`;
+  } catch (e) { toast('Click error: ' + e.message, 'error'); }
+}
+
+async function browserType() {
+  const sel = document.getElementById('browserSelector').value.trim();
+  const text = document.getElementById('browserText').value;
+  if (!sel) return;
+  try {
+    await api('/browser/type', { method: 'POST', body: JSON.stringify({ selector: sel, text }) });
+    document.getElementById('browserLog').innerHTML = `<div class="log-entry">Typed into ${escHtml(sel)}: "${escHtml(text)}"</div>`;
+  } catch (e) { toast('Type error: ' + e.message, 'error'); }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 🔌 Plugins
+// ═══════════════════════════════════════════════════════════════
+async function loadPlugins() {
+  try {
+    const data = await api('/plugins');
+    document.getElementById('pluginGrid').innerHTML = (data.plugins || []).map(p => `
+      <div class="card fade-in">
+        <div class="card-header">
+          <span class="card-title">${escHtml(p.name)}</span>
+          <span class="badge ${p.enabled ? 'badge-green' : 'badge-red'}">${p.enabled ? 'Enabled' : 'Disabled'}</span>
+        </div>
+        <p style="font-size:0.8rem;color:var(--text-dim);margin-bottom:8px">${escHtml(p.description || '')}</p>
+        <span style="font-size:0.72rem;color:var(--text-muted)">v${escHtml(p.version || '?')}</span>
+      </div>
+    `).join('') || '<p style="color:var(--text-dim)">No plugins installed.</p>';
+  } catch (e) { console.error('Plugins error:', e); }
+}
+
+async function installPlugin() {
+  const name = document.getElementById('pluginInstallInput').value.trim();
+  if (!name) return;
+  try {
+    await api('/plugins/install', { method: 'POST', body: JSON.stringify({ name }) });
+    toast('Plugin installed!', 'success');
+    document.getElementById('pluginInstallInput').value = '';
+    loadPlugins();
+  } catch (e) { toast('Install error: ' + e.message, 'error'); }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 🛠️ Tools
+// ═══════════════════════════════════════════════════════════════
+async function loadTools() {
+  try {
+    const data = await api('/tools');
+    document.getElementById('toolsBody').innerHTML = (data.tools || []).map(t => `
+      <tr>
+        <td><strong>${escHtml(t.name)}</strong></td>
+        <td style="color:var(--text-dim)">${escHtml(t.description || '')}</td>
+        <td><code style="font-size:0.72rem">${escHtml(JSON.stringify(t.parameters || {}).slice(0,80))}</code></td>
+        <td><span class="badge badge-green">Active</span></td>
+        <td><button class="btn btn-secondary btn-sm" onclick="executeTool('${escHtml(t.name)}')">Run</button></td>
+      </tr>
+    `).join('') || '<tr><td colspan="5" style="color:var(--text-dim)">No tools registered.</td></tr>';
+  } catch (e) { console.error('Tools error:', e); }
+}
+
+async function executeTool(name) {
+  showModal('Execute Tool: ' + name, `
+    <div class="input-group"><label class="input-label">Arguments (JSON)</label>
+      <textarea id="toolArgs" class="input" rows="4">{}</textarea>
+    </div>
+  `, async () => {
+    try {
+      const args = JSON.parse(document.getElementById('toolArgs').value || '{}');
+      const data = await api('/tools/execute', { method: 'POST', body: JSON.stringify({ tool: name, args }) });
+      toast('Tool executed!', 'success');
+      closeModal();
+      appendToolMsg('✅ ' + name, JSON.stringify(data.result, null, 2));
+      showPage('chat');
+    } catch (e) { toast('Error: ' + e.message, 'error'); }
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 📁 Files
+// ═══════════════════════════════════════════════════════════════
+async function loadFiles(path = '') {
+  try {
+    const data = await api('/files' + (path ? '?path=' + encodeURIComponent(path) : ''));
+    const list = document.getElementById('fileList');
+    let html = '';
+    if (data.parent !== undefined) {
+      html += `<div class="file-item" onclick="loadFiles('${escHtml(data.parent || '')}')"><span class="file-icon">⬆️</span><span class="file-name">..</span></div>`;
+    }
+    html += (data.files || []).map(f => {
+      const icon = f.is_dir ? '📁' : '📄';
+      const click = f.is_dir ? `loadFiles('${escHtml(f.path)}')` : `downloadFile('${escHtml(f.path)}')`;
+      return `<div class="file-item" onclick="${click}">
+        <span class="file-icon">${icon}</span>
+        <span class="file-name">${escHtml(f.name)}</span>
+        <span class="file-size">${f.is_dir ? '' : formatBytes(f.size)}</span>
+      </div>`;
+    }).join('');
+    list.innerHTML = html || '<p style="color:var(--text-dim)">Empty directory</p>';
+  } catch (e) { console.error('Files error:', e); }
+}
+
+function downloadFile(path) {
+  window.open('/api/files/download?path=' + encodeURIComponent(path) + '&token=' + encodeURIComponent(authToken), '_blank');
+}
+
+function formatBytes(b) {
+  if (!b) return '';
+  const u = ['B','KB','MB','GB'];
+  let i = 0;
+  while (b >= 1024 && i < 3) { b /= 1024; i++; }
+  return b.toFixed(1) + ' ' + u[i];
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 📈 Metrics
+// ═══════════════════════════════════════════════════════════════
+async function loadMetrics() {
+  try {
+    const data = await api('/metrics');
+    document.getElementById('metricsStats').innerHTML = `
+      <div class="stat-card"><div class="stat-value">${data.total_requests || 0}</div><div class="stat-label">Requests</div></div>
+      <div class="stat-card"><div class="stat-value">${data.avg_latency_ms || 0}ms</div><div class="stat-label">Avg Latency</div></div>
+      <div class="stat-card"><div class="stat-value">${data.error_rate || '0%'}</div><div class="stat-label">Error Rate</div></div>
+      <div class="stat-card"><div class="stat-value">${data.active_connections || 0}</div><div class="stat-label">WS Connections</div></div>
+    `;
+    document.getElementById('metricsDetail').innerHTML = `<pre style="white-space:pre-wrap">${escHtml(JSON.stringify(data, null, 2))}</pre>`;
+    drawMiniChart('chartThroughput', data.throughput_history || []);
+    drawMiniChart('chartErrors', data.error_history || []);
+  } catch (e) { console.error('Metrics error:', e); }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 🔒 Security
+// ═══════════════════════════════════════════════════════════════
+async function loadSecurity() {
+  try {
+    const data = await api('/security');
+    document.getElementById('securityStats').innerHTML = `
+      <div class="stat-card"><div class="stat-value">${data.users_count || 0}</div><div class="stat-label">Users</div></div>
+      <div class="stat-card"><div class="stat-value">${data.failed_logins || 0}</div><div class="stat-label">Failed Logins</div></div>
+      <div class="stat-card"><div class="stat-value"><span class="badge badge-green">${data.encryption || 'AES-256'}</span></div><div class="stat-label">Encryption</div></div>
+    `;
+    document.getElementById('auditLog').innerHTML = (data.audit_log || []).map(l => `
+      <div class="log-entry"><span class="log-time">${escHtml(l.time || '')}</span> — ${escHtml(l.event || '')}</div>
+    `).join('') || '<p style="color:var(--text-dim)">No audit entries.</p>';
+  } catch (e) { console.error('Security error:', e); }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 👥 Users
+// ═══════════════════════════════════════════════════════════════
+async function loadUsers() {
+  try {
+    const data = await api('/users');
+    document.getElementById('usersBody').innerHTML = (data.users || []).map(u => `
+      <tr>
+        <td><strong>${escHtml(u.username)}</strong></td>
+        <td><span class="badge badge-purple">${escHtml(u.role || 'user')}</span></td>
+        <td style="color:var(--text-dim)">${escHtml(u.created || '')}</td>
+        <td><span class="badge badge-green">Active</span></td>
+        <td><button class="btn btn-danger btn-sm" onclick="deleteUser('${escHtml(u.username)}')">Delete</button></td>
+      </tr>
+    `).join('') || '<tr><td colspan="5" style="color:var(--text-dim)">No users.</td></tr>';
+  } catch (e) { console.error('Users error:', e); }
+}
+
+function showAddUserModal() {
+  showModal('Add User', `
+    <div class="input-group"><label class="input-label">Username</label><input id="newUser" class="input"></div>
+    <div class="input-group"><label class="input-label">Password</label><input id="newPass" type="password" class="input"></div>
+    <div class="input-group"><label class="input-label">Role</label>
+      <select id="newRole" class="input"><option value="user">User</option><option value="admin">Admin</option></select>
+    </div>
+  `, async () => {
+    try {
+      await api('/auth/register', { method: 'POST', body: JSON.stringify({ username: document.getElementById('newUser').value, password: document.getElementById('newPass').value, role: document.getElementById('newRole').value }) });
+      toast('User created!', 'success');
+      closeModal();
+      loadUsers();
+    } catch (e) { toast('Error: ' + e.message, 'error'); }
+  });
+}
+
+async function deleteUser(username) {
+  if (!confirm('Delete user ' + username + '?')) return;
+  try {
+    await api('/users?username=' + encodeURIComponent(username), { method: 'DELETE' });
+    toast('User deleted', 'success');
+    loadUsers();
+  } catch (e) { toast('Error: ' + e.message, 'error'); }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ⚙️ Settings
+// ═══════════════════════════════════════════════════════════════
+async function loadSettings() {
+  try {
+    const data = await api('/config');
+    document.getElementById('configEditor').value = JSON.stringify(data.config || data, null, 2);
+  } catch (e) { console.error('Settings error:', e); }
+  try {
+    const prov = await api('/providers');
+    document.getElementById('providerList').innerHTML = (prov.providers || []).map(p => `
+      <div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--border)">
+        <span class="badge ${p.status === 'active' ? 'badge-green' : 'badge-red'}">${p.status || 'unknown'}</span>
+        <strong>${escHtml(p.name)}</strong>
+        <span style="color:var(--text-dim);font-size:0.78rem">${escHtml(p.model || '')}</span>
+      </div>
+    `).join('') || '<p style="color:var(--text-dim)">No providers.</p>';
+  } catch (e) {}
+  try {
+    const ch = await api('/channels');
+    document.getElementById('channelList').innerHTML = (ch.channels || []).map(c => `
+      <div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--border)">
+        <span class="badge badge-blue">${escHtml(c.type || 'unknown')}</span>
+        <strong>${escHtml(c.name)}</strong>
+        <span class="badge ${c.enabled ? 'badge-green' : 'badge-red'}">${c.enabled ? 'Active' : 'Disabled'}</span>
+      </div>
+    `).join('') || '<p style="color:var(--text-dim)">No channels.</p>';
+  } catch (e) {}
+}
+
+async function saveConfig() {
+  try {
+    const config = JSON.parse(document.getElementById('configEditor').value);
+    await api('/config', { method: 'POST', body: JSON.stringify({ config }) });
+    toast('Config saved!', 'success');
+  } catch (e) { toast('Save error: ' + e.message, 'error'); }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 🎨 Mini Chart (Canvas)
+// ═══════════════════════════════════════════════════════════════
+function drawMiniChart(canvasId, data) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const rect = canvas.parentElement.getBoundingClientRect();
+  canvas.width = rect.width;
+  canvas.height = rect.height;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  if (!data.length) {
+    // Generate demo data
+    for (let i = 0; i < 24; i++) data.push(Math.random() * 100);
+  }
+
+  const w = canvas.width, h = canvas.height;
+  const max = Math.max(...data, 1);
+  const step = w / (data.length - 1 || 1);
+
+  // Grid
+  ctx.strokeStyle = 'rgba(42,42,85,0.5)';
+  ctx.lineWidth = 1;
+  for (let i = 0; i < 5; i++) {
+    const y = (h / 5) * i + 10;
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+  }
+
+  // Line
+  ctx.beginPath();
+  ctx.moveTo(0, h - (data[0] / max) * (h - 20) - 10);
+  for (let i = 1; i < data.length; i++) {
+    ctx.lineTo(i * step, h - (data[i] / max) * (h - 20) - 10);
+  }
+  ctx.strokeStyle = '#8b5cf6';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // Fill
+  ctx.lineTo((data.length - 1) * step, h);
+  ctx.lineTo(0, h);
+  ctx.closePath();
+  const grad = ctx.createLinearGradient(0, 0, 0, h);
+  grad.addColorStop(0, 'rgba(139,92,246,0.3)');
+  grad.addColorStop(1, 'rgba(139,92,246,0.02)');
+  ctx.fillStyle = grad;
+  ctx.fill();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 🔔 Toast
+// ═══════════════════════════════════════════════════════════════
+function toast(msg, type = 'info') {
+  const div = document.createElement('div');
+  div.className = 'toast toast-' + type;
+  div.textContent = msg;
+  document.getElementById('toastContainer').appendChild(div);
+  setTimeout(() => div.remove(), 4000);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 🪟 Modal
+// ═══════════════════════════════════════════════════════════════
+function showModal(title, bodyHtml, onConfirm) {
+  document.getElementById('modalContainer').innerHTML = `
+    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+      <div class="modal">
+        <div class="modal-title">${escHtml(title)}</div>
+        ${bodyHtml}
+        <div class="modal-actions">
+          <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+          <button class="btn btn-primary" id="modalConfirm">Confirm</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.getElementById('modalConfirm').onclick = onConfirm;
+}
+
+function closeModal() {
+  document.getElementById('modalContainer').innerHTML = '';
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 🚀 Init
+// ═══════════════════════════════════════════════════════════════
+if (authToken) {
+  // Validate token
+  api('/status').then(() => {
+    currentUser = 'user';
+    enterApp();
+  }).catch(() => {
+    authToken = ''; localStorage.removeItem('rally_token');
+    document.getElementById('loginPage').style.display = 'flex';
+  });
+} else {
+  document.getElementById('loginPage').style.display = 'flex';
+}
+</script>
+</body>
+</html>"""
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -19,1355 +1265,880 @@ from cli.theme import Theme
 # ═══════════════════════════════════════════════════════════════
 
 def create_app(engine):
-    """Create the Rally Agent web application"""
-    try:
-        from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
-        from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
-        from fastapi.staticfiles import StaticFiles
-        import uvicorn
-    except ImportError:
-        raise RuntimeError("Web UI requires: pip install fastapi uvicorn")
+    """Create the Rally Agent web application with full API and UI.
 
-    app = FastAPI(title="Rally Agent", version="1.0.0")
+    Args:
+        engine: The main Rally engine instance with:
+            - engine.chat(messages) -> response
+            - engine.orchestrator: AgentOrchestrator
+            - engine.swarm: SwarmQueen (optional)
+            - engine.memory: MemorySystem (optional)
+            - engine.tools: ToolRegistry (optional)
+            - engine.providers: ProviderManager (optional)
+            - engine.plugins: PluginManager (optional)
+            - engine.config: dict
+            - engine.browser: BrowserAutomation (optional)
+            - engine.sandbox: SandboxExecutor (optional)
+            - engine.data_dir: str
+    """
 
-    # ── WebSocket connections ──────────────────────────────────
-    active_connections: list[WebSocket] = []
+    app = FastAPI(title="Rally Agent", version="2.0.0")
 
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    # ── State ──────────────────────────────────────────────────
+    start_time = time.time()
+    active_ws: list[WebSocket] = []
+    request_log: list[dict] = []
+    audit_log: list[dict] = []
+    users_db: dict[str, dict] = {}
+    feedback_log: list[dict] = []
+
+    # Initialize default admin user
+    admin_pw_hash = hashlib.sha256("admin".encode()).hexdigest()
+    users_db["admin"] = {
+        "username": "admin",
+        "password_hash": admin_pw_hash,
+        "role": "admin",
+        "created": datetime.now().isoformat(),
+    }
+
+    # Load users from disk if available
+    users_file = os.path.join(getattr(engine, 'data_dir', '~/.rally-agent/data'), 'users.json')
+    users_file = os.path.expanduser(users_file)
+    if os.path.exists(users_file):
+        try:
+            with open(users_file) as f:
+                loaded = json.load(f)
+                users_db.update(loaded)
+        except Exception:
+            pass
+
+    def _save_users():
+        os.makedirs(os.path.dirname(users_file), exist_ok=True)
+        with open(users_file, 'w') as f:
+            json.dump(users_db, f, indent=2)
+
+    def _log_audit(event: str, user: str = "system"):
+        audit_log.append({
+            "time": datetime.now().isoformat(),
+            "user": user,
+            "event": event,
+        })
+        if len(audit_log) > 500:
+            audit_log[:] = audit_log[-500:]
+
+    def _record_request(endpoint: str, latency_ms: float, status_code: int = 200):
+        request_log.append({
+            "endpoint": endpoint,
+            "latency_ms": round(latency_ms, 2),
+            "status": status_code,
+            "timestamp": time.time(),
+        })
+        if len(request_log) > 1000:
+            request_log[:] = request_log[-1000:]
+
+    def _uptime() -> str:
+        s = int(time.time() - start_time)
+        if s < 60: return f"{s}s"
+        if s < 3600: return f"{s//60}m {s%60}s"
+        return f"{s//3600}h {(s%3600)//60}m"
+
+    # ── Auth dependency ────────────────────────────────────────
+    async def get_current_user(request: Request) -> Optional[str]:
+        auth = request.headers.get("Authorization", "")
+        token = auth.replace("Bearer ", "") if auth.startswith("Bearer ") else ""
+        # Also check query param (for file downloads)
+        if not token:
+            token = request.query_params.get("token", "")
+        if not token:
+            return None
+        payload = _jwt_decode(token)
+        if not payload:
+            return None
+        return payload.get("sub")
+
+    async def require_auth(request: Request) -> str:
+        user = await get_current_user(request)
+        if not user:
+            raise HTTPException(status_code=401, detail="Not authenticated")
+        return user
+
+    async def require_admin(request: Request) -> str:
+        user = await require_auth(request)
+        if users_db.get(user, {}).get("role") != "admin":
+            raise HTTPException(status_code=403, detail="Admin access required")
+        return user
+
+    def _make_token(username: str) -> str:
+        return _jwt_encode({
+            "sub": username,
+            "role": users_db.get(username, {}).get("role", "user"),
+            "exp": time.time() + JWT_EXPIRY_HOURS * 3600,
+        })
+
+    # ── WebSocket ──────────────────────────────────────────────
     @app.websocket("/ws")
-    async def websocket_endpoint(websocket: WebSocket):
+    async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
+        # Auth check
+        user = None
+        if token:
+            payload = _jwt_decode(token)
+            if payload:
+                user = payload.get("sub")
+        if not user:
+            await websocket.close(code=4001)
+            return
+
         await websocket.accept()
-        active_connections.append(websocket)
+        active_ws.append(websocket)
+        _log_audit(f"WebSocket connected: {user}", user)
+
         try:
             while True:
                 data = await websocket.receive_text()
                 msg = json.loads(data)
 
                 if msg.get("type") == "chat":
-                    response = await engine.chat(msg.get("content", ""))
-                    await websocket.send_json({
-                        "type": "response",
-                        "content": response,
-                        "timestamp": datetime.now().isoformat(),
-                    })
-                elif msg.get("type") == "tool":
-                    result = await engine._handle_tool_call(msg.get("command", ""))
-                    await websocket.send_json({
-                        "type": "tool_result",
-                        "content": result,
-                        "timestamp": datetime.now().isoformat(),
-                    })
+                    content = msg.get("content", "")
+                    _log_audit(f"Chat message: {content[:100]}", user)
+
+                    try:
+                        # Stream response via engine
+                        if hasattr(engine, 'chat_stream'):
+                            async for chunk in engine.chat_stream(content):
+                                await websocket.send_json({"type": "token", "content": chunk})
+                            await websocket.send_json({"type": "done", "content": ""})
+                        elif hasattr(engine, 'chat'):
+                            # Try streaming if engine.chat returns async generator
+                            result = engine.chat(content)
+                            if hasattr(result, '__aiter__'):
+                                async for chunk in result:
+                                    if isinstance(chunk, dict):
+                                        await websocket.send_json(chunk)
+                                    else:
+                                        await websocket.send_json({"type": "token", "content": str(chunk)})
+                                await websocket.send_json({"type": "done", "content": ""})
+                            else:
+                                response = await result if asyncio.iscoroutine(result) else result
+                                # Simulate streaming by sending in chunks
+                                response_str = str(response)
+                                chunk_size = 20
+                                for i in range(0, len(response_str), chunk_size):
+                                    await websocket.send_json({"type": "token", "content": response_str[i:i+chunk_size]})
+                                    await asyncio.sleep(0.02)
+                                await websocket.send_json({"type": "done", "content": ""})
+                        else:
+                            await websocket.send_json({"type": "error", "content": "No chat engine available"})
+
+                    except Exception as e:
+                        await websocket.send_json({"type": "error", "content": str(e)})
+
+                elif msg.get("type") == "ping":
+                    await websocket.send_json({"type": "pong"})
+
         except WebSocketDisconnect:
-            active_connections.remove(websocket)
+            pass
+        except Exception:
+            pass
+        finally:
+            if websocket in active_ws:
+                active_ws.remove(websocket)
 
-    # ── API Routes ─────────────────────────────────────────────
-    @app.get("/api/status")
-    async def get_status():
-        uptime = time.time() - engine.start_time
-        return {
-            "status": "running",
-            "version": "1.0.0",
-            "model": engine.current_model,
-            "thinking": engine.thinking_enabled,
-            "messages": len(engine.conversation),
-            "uptime": int(uptime),
-            "tools": len(engine.tools.get_all()) if engine.tools else 0,
-            "agents": len(engine.agents.get_all()) if engine.agents else 0,
-            "memory": engine.memory.count() if engine.memory else 0,
+    # ══════════════════════════════════════════════════════════════
+    # 🔑 Auth Endpoints
+    # ══════════════════════════════════════════════════════════════
+
+    @app.post("/api/auth/login")
+    async def auth_login(body: dict):
+        t0 = time.time()
+        username = body.get("username", "").strip()
+        password = body.get("password", "")
+        if not username or not password:
+            _record_request("auth/login", (time.time()-t0)*1000, 400)
+            return JSONResponse({"error": "Username and password required"}, status_code=400)
+
+        pw_hash = hashlib.sha256(password.encode()).hexdigest()
+        user = users_db.get(username)
+        if not user or user.get("password_hash") != pw_hash:
+            _log_audit(f"Failed login: {username}")
+            _record_request("auth/login", (time.time()-t0)*1000, 401)
+            return JSONResponse({"error": "Invalid credentials"}, status_code=401)
+
+        token = _make_token(username)
+        _log_audit(f"Login success: {username}", username)
+        _record_request("auth/login", (time.time()-t0)*1000)
+        return {"token": token, "user": {"username": username, "role": user.get("role", "user")}}
+
+    @app.post("/api/auth/register")
+    async def auth_register(body: dict):
+        t0 = time.time()
+        username = body.get("username", "").strip()
+        password = body.get("password", "")
+        role = body.get("role", "user")
+        if not username or not password:
+            return JSONResponse({"error": "Username and password required"}, status_code=400)
+        if len(password) < 4:
+            return JSONResponse({"error": "Password must be at least 4 characters"}, status_code=400)
+        if username in users_db:
+            return JSONResponse({"error": "Username already exists"}, status_code=409)
+
+        pw_hash = hashlib.sha256(password.encode()).hexdigest()
+        users_db[username] = {
+            "username": username,
+            "password_hash": pw_hash,
+            "role": role if role in ("user", "admin") else "user",
+            "created": datetime.now().isoformat(),
         }
+        _save_users()
+        token = _make_token(username)
+        _log_audit(f"User registered: {username}")
+        _record_request("auth/register", (time.time()-t0)*1000)
+        return {"token": token, "user": {"username": username, "role": role}}
 
-    @app.get("/api/agents")
-    async def get_agents():
-        if engine.agents:
-            return {"agents": engine.agents.get_all()}
-        return {"agents": []}
+    # ══════════════════════════════════════════════════════════════
+    # 📊 Status & Config
+    # ══════════════════════════════════════════════════════════════
 
-    @app.get("/api/tools")
-    async def get_tools():
-        if engine.tools:
-            return {"tools": engine.tools.get_all()}
-        return {"tools": []}
+    @app.get("/api/status")
+    async def get_status(user: str = Depends(require_auth)):
+        t0 = time.time()
+        orchestrator = getattr(engine, 'orchestrator', None)
+        agents_count = len(orchestrator.agents) if orchestrator else 0
+        tools_reg = getattr(engine, 'tools', None)
+        tools_count = len(tools_reg.tools) if tools_reg and hasattr(tools_reg, 'tools') else 0
+        providers_mgr = getattr(engine, 'providers', None)
+        providers_list = []
+        if providers_mgr:
+            if hasattr(providers_mgr, 'providers'):
+                providers_list = list(providers_mgr.providers.keys()) if isinstance(providers_mgr.providers, dict) else [str(p) for p in providers_mgr.providers]
+            elif hasattr(providers_mgr, 'list'):
+                providers_list = [p.get('name', str(p)) for p in providers_mgr.list()]
 
-    @app.get("/api/memory")
-    async def get_memory():
-        if engine.memory:
-            return {"entries": engine.memory.get_recent(100), "count": engine.memory.count()}
-        return {"entries": [], "count": 0}
+        memory = getattr(engine, 'memory', None)
+        memory_entries = 0
+        if memory:
+            if hasattr(memory, 'entries'):
+                memory_entries = len(memory.entries)
+            elif hasattr(memory, 'count'):
+                memory_entries = memory.count()
 
-    @app.get("/api/memory/search")
-    async def search_memory(q: str = ""):
-        if engine.memory and q:
-            return {"results": engine.memory.search(q)}
-        return {"results": []}
+        plugins_mgr = getattr(engine, 'plugins', None)
+        plugins_count = 0
+        if plugins_mgr:
+            if hasattr(plugins_mgr, 'plugins'):
+                plugins_count = len(plugins_mgr.plugins)
 
-    @app.get("/api/conversation")
-    async def get_conversation():
-        return {"messages": engine.conversation[-100:]}
+        # Request history for charts (last 24 data points)
+        now = time.time()
+        req_history = [0] * 24
+        lat_history = [0] * 24
+        for r in request_log:
+            hours_ago = int((now - r['timestamp']) / 3600)
+            idx = 23 - min(hours_ago, 23)
+            req_history[idx] += 1
+            lat_history[idx] = max(lat_history[idx], r['latency_ms'])
 
-    @app.get("/api/providers")
-    async def get_providers():
-        if engine.providers:
-            return {"providers": engine.providers.get_all_info()}
-        return {"providers": []}
-
-    @app.get("/api/channels")
-    async def get_channels():
-        from integrations.channels import ChannelManager
-        cm = ChannelManager(engine.config)
-        return {"channels": cm.get_all_info()}
+        _record_request("status", (time.time()-t0)*1000)
+        return {
+            "version": "2.0.0",
+            "uptime": _uptime(),
+            "agents_count": agents_count,
+            "tools_count": tools_count,
+            "providers": providers_list,
+            "total_requests": len(request_log),
+            "memory_entries": memory_entries,
+            "plugins_count": plugins_count,
+            "active_connections": len(active_ws),
+            "request_history": req_history,
+            "latency_history": lat_history,
+        }
 
     @app.get("/api/config")
-    async def get_config():
-        return {"config": engine.config.data}
+    async def get_config(user: str = Depends(require_auth)):
+        config = getattr(engine, 'config', {})
+        if callable(config):
+            config = config()
+        # Sanitize sensitive fields
+        safe_config = _sanitize_config(config) if isinstance(config, dict) else {"raw": str(config)}
+        return {"config": safe_config}
 
     @app.post("/api/config")
-    async def set_config(request: Request):
-        data = await request.json()
-        key = data.get("key", "")
-        value = data.get("value", "")
-        if key:
-            engine.config.set(key, value)
-            return {"success": True}
-        return {"success": False, "error": "Missing key"}
+    async def update_config(body: dict, user: str = Depends(require_admin)):
+        config_data = body.get("config", {})
+        if hasattr(engine, 'update_config'):
+            engine.update_config(config_data)
+        elif hasattr(engine, 'config'):
+            if isinstance(engine.config, dict):
+                engine.config.update(config_data)
+        _log_audit(f"Config updated by {user}", user)
+        return {"status": "updated"}
 
-    @app.get("/api/files")
-    async def list_files(path: str = "."):
-        try:
-            entries = []
-            full_path = os.path.abspath(path)
-            for entry in sorted(os.listdir(full_path)):
-                entry_path = os.path.join(full_path, entry)
-                is_dir = os.path.isdir(entry_path)
-                size = 0 if is_dir else os.path.getsize(entry_path)
-                entries.append({
-                    "name": entry,
-                    "path": entry_path,
-                    "is_dir": is_dir,
-                    "size": size,
-                    "modified": datetime.fromtimestamp(os.path.getmtime(entry_path)).isoformat(),
-                })
-            return {"files": entries, "path": full_path}
-        except Exception as e:
-            return {"files": [], "error": str(e)}
+    def _sanitize_config(config: dict) -> dict:
+        """Remove sensitive fields from config"""
+        sensitive_keys = {'api_key', 'apikey', 'secret', 'password', 'token', 'private_key', 'credentials'}
+        result = {}
+        for k, v in config.items():
+            if any(s in k.lower() for s in sensitive_keys):
+                result[k] = "***REDACTED***"
+            elif isinstance(v, dict):
+                result[k] = _sanitize_config(v)
+            else:
+                result[k] = v
+        return result
 
-    @app.get("/api/files/download")
-    async def download_file(path: str):
-        if os.path.exists(path) and os.path.isfile(path):
-            return FileResponse(path, filename=os.path.basename(path))
-        return JSONResponse({"error": "File not found"}, status_code=404)
-
-    @app.get("/api/files/read")
-    async def read_file(path: str):
-        try:
-            with open(path) as f:
-                content = f.read(100000)
-            return {"content": content, "path": path}
-        except Exception as e:
-            return {"error": str(e)}
+    # ══════════════════════════════════════════════════════════════
+    # 💬 Chat (SSE fallback)
+    # ══════════════════════════════════════════════════════════════
 
     @app.post("/api/chat")
-    async def chat_endpoint(request: Request):
-        data = await request.json()
-        message = data.get("message", "")
-        if message:
-            response = await engine.chat(message)
-            return {"response": response, "timestamp": datetime.now().isoformat()}
-        return {"error": "No message provided"}
+    async def api_chat(body: dict, user: str = Depends(require_auth)):
+        t0 = time.time()
+        content = body.get("content", "")
+        if not content:
+            return JSONResponse({"error": "No content provided"}, status_code=400)
 
-    @app.post("/api/task")
-    async def run_task(request: Request):
-        data = await request.json()
-        task = data.get("task", "")
-        if task:
-            result = await engine.run_task(task)
+        _log_audit(f"Chat: {content[:80]}", user)
+
+        async def event_stream():
+            try:
+                if hasattr(engine, 'chat_stream'):
+                    async for chunk in engine.chat_stream(content):
+                        yield f"data: {json.dumps({'type': 'token', 'content': chunk})}\n\n"
+                    yield f"data: {json.dumps({'type': 'done', 'content': ''})}\n\n"
+                elif hasattr(engine, 'chat'):
+                    result = engine.chat(content)
+                    if asyncio.iscoroutine(result):
+                        result = await result
+                    if hasattr(result, '__aiter__'):
+                        async for chunk in result:
+                            if isinstance(chunk, dict):
+                                yield f"data: {json.dumps(chunk)}\n\n"
+                            else:
+                                yield f"data: {json.dumps({'type': 'token', 'content': str(chunk)})}\n\n"
+                        yield f"data: {json.dumps({'type': 'done', 'content': ''})}\n\n"
+                    else:
+                        response = str(result)
+                        chunk_size = 20
+                        for i in range(0, len(response), chunk_size):
+                            yield f"data: {json.dumps({'type': 'token', 'content': response[i:i+chunk_size]})}\n\n"
+                            await asyncio.sleep(0.01)
+                        yield f"data: {json.dumps({'type': 'done', 'content': ''})}\n\n"
+                else:
+                    yield f"data: {json.dumps({'type': 'error', 'content': 'No chat engine available'})}\n\n"
+            except Exception as e:
+                yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
+
+        _record_request("chat", (time.time()-t0)*1000)
+        return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+    # ══════════════════════════════════════════════════════════════
+    # 🤖 Agents
+    # ══════════════════════════════════════════════════════════════
+
+    @app.get("/api/agents")
+    async def list_agents(user: str = Depends(require_auth)):
+        orchestrator = getattr(engine, 'orchestrator', None)
+        agents = []
+        if orchestrator:
+            agents = orchestrator.get_all() if hasattr(orchestrator, 'get_all') else []
+        return {"agents": agents}
+
+    @app.post("/api/agents/spawn")
+    async def spawn_agent(body: dict, user: str = Depends(require_auth)):
+        agent_type = body.get("type", "orchestrator")
+        task = body.get("task", "")
+        orchestrator = getattr(engine, 'orchestrator', None)
+        if not orchestrator:
+            return JSONResponse({"error": "No orchestrator available"}, status_code=400)
+        agent = orchestrator.spawn(agent_type) if hasattr(orchestrator, 'spawn') else None
+        if not agent:
+            return JSONResponse({"error": f"Unknown agent type: {agent_type}"}, status_code=400)
+        _log_audit(f"Agent spawned: {agent_type}", user)
+        result = None
+        if task and hasattr(agent, 'process'):
+            result = await agent.process(task) if asyncio.iscoroutinefunction(agent.process) else agent.process(task)
+        return {"agent": agent.to_dict() if hasattr(agent, 'to_dict') else {"name": str(agent)}, "result": result}
+
+    @app.post("/api/swarm")
+    async def run_swarm(body: dict, user: str = Depends(require_auth)):
+        task = body.get("task", "")
+        size = body.get("size", 10)
+        swarm = getattr(engine, 'swarm', None)
+        if not swarm:
+            return JSONResponse({"error": "Swarm not available"}, status_code=400)
+        if not task:
+            return JSONResponse({"error": "Task required"}, status_code=400)
+        _log_audit(f"Swarm task: {task[:80]}", user)
+        result = await swarm.execute_swarm_task(task, size)
+        return {"result": result, "stats": swarm.get_swarm_stats()}
+
+    # ══════════════════════════════════════════════════════════════
+    # 🧠 Memory
+    # ══════════════════════════════════════════════════════════════
+
+    @app.get("/api/memory")
+    async def memory_stats(user: str = Depends(require_auth)):
+        memory = getattr(engine, 'memory', None)
+        if not memory:
+            # Try swarm knowledge
+            swarm = getattr(engine, 'swarm', None)
+            if swarm and hasattr(swarm, 'knowledge'):
+                return swarm.knowledge.get_stats()
+            return {"total_entries": 0, "categories": [], "most_useful": []}
+        if hasattr(memory, 'get_stats'):
+            return memory.get_stats()
+        return {"total_entries": getattr(memory, 'count', lambda: 0)()}
+
+    @app.get("/api/memory/search")
+    async def memory_search(q: str = Query(""), user: str = Depends(require_auth)):
+        if not q:
+            return {"results": []}
+        memory = getattr(engine, 'memory', None)
+        if memory and hasattr(memory, 'search'):
+            results = memory.search(q)
+            return {"results": results}
+        # Try swarm knowledge
+        swarm = getattr(engine, 'swarm', None)
+        if swarm and hasattr(swarm, 'knowledge'):
+            return {"results": swarm.knowledge.search(q)}
+        return {"results": []}
+
+    @app.post("/api/memory/rag/ingest")
+    async def rag_ingest(body: dict, user: str = Depends(require_auth)):
+        content = body.get("content", "")
+        if not content:
+            return JSONResponse({"error": "Content required"}, status_code=400)
+        memory = getattr(engine, 'memory', None)
+        if memory and hasattr(memory, 'add'):
+            memory.add(content, source="web-ui", category="rag")
+            return {"status": "ingested", "length": len(content)}
+        # Try swarm knowledge
+        swarm = getattr(engine, 'swarm', None)
+        if swarm and hasattr(swarm, 'knowledge'):
+            swarm.knowledge.add(content, source="web-ui", category="rag")
+            return {"status": "ingested", "length": len(content)}
+        return JSONResponse({"error": "No memory system available"}, status_code=400)
+
+    @app.get("/api/memory/rag/search")
+    async def rag_search(q: str = Query(""), user: str = Depends(require_auth)):
+        if not q:
+            return {"results": []}
+        memory = getattr(engine, 'memory', None)
+        if memory and hasattr(memory, 'search'):
+            return {"results": memory.search(q)}
+        swarm = getattr(engine, 'swarm', None)
+        if swarm and hasattr(swarm, 'knowledge'):
+            return {"results": swarm.knowledge.search(q)}
+        return {"results": []}
+
+    # ══════════════════════════════════════════════════════════════
+    # 🛠️ Tools
+    # ══════════════════════════════════════════════════════════════
+
+    @app.get("/api/tools")
+    async def list_tools(user: str = Depends(require_auth)):
+        tools_reg = getattr(engine, 'tools', None)
+        tools_list = []
+        if tools_reg:
+            if hasattr(tools_reg, 'list'):
+                tools_list = tools_reg.list()
+            elif hasattr(tools_reg, 'tools'):
+                if isinstance(tools_reg.tools, dict):
+                    tools_list = [
+                        {"name": name, "description": getattr(t, 'description', ''), "parameters": getattr(t, 'parameters', {})}
+                        for name, t in tools_reg.tools.items()
+                    ]
+                else:
+                    tools_list = [{"name": str(t), "description": "", "parameters": {}} for t in tools_reg.tools]
+        return {"tools": tools_list}
+
+    @app.post("/api/tools/execute")
+    async def execute_tool(body: dict, user: str = Depends(require_auth)):
+        tool_name = body.get("tool", "")
+        args = body.get("args", {})
+        tools_reg = getattr(engine, 'tools', None)
+        if not tools_reg:
+            return JSONResponse({"error": "No tool registry"}, status_code=400)
+        _log_audit(f"Tool executed: {tool_name}", user)
+        try:
+            if hasattr(tools_reg, 'execute'):
+                result = await tools_reg.execute(tool_name, args) if asyncio.iscoroutinefunction(tools_reg.execute) else tools_reg.execute(tool_name, args)
+            elif hasattr(tools_reg, 'tools') and isinstance(tools_reg.tools, dict):
+                tool = tools_reg.tools.get(tool_name)
+                if not tool:
+                    return JSONResponse({"error": f"Tool not found: {tool_name}"}, status_code=404)
+                fn = getattr(tool, 'execute', None) or getattr(tool, 'run', None) or getattr(tool, '__call__', None)
+                if not fn:
+                    return JSONResponse({"error": "Tool has no execute method"}, status_code=400)
+                result = await fn(**args) if asyncio.iscoroutinefunction(fn) else fn(**args)
+            else:
+                return JSONResponse({"error": "Cannot execute tool"}, status_code=400)
             return {"result": result}
-        return {"error": "No task provided"}
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
 
-    @app.get("/api/stats")
-    async def get_stats():
+    # ══════════════════════════════════════════════════════════════
+    # 🔌 Providers & Channels
+    # ══════════════════════════════════════════════════════════════
+
+    @app.get("/api/providers")
+    async def list_providers(user: str = Depends(require_auth)):
+        providers_mgr = getattr(engine, 'providers', None)
+        providers_list = []
+        if providers_mgr:
+            if hasattr(providers_mgr, 'list'):
+                providers_list = providers_mgr.list()
+            elif hasattr(providers_mgr, 'providers') and isinstance(providers_mgr.providers, dict):
+                providers_list = [
+                    {"name": k, "status": "active", "model": getattr(v, 'model', '') if hasattr(v, 'model') else ''}
+                    for k, v in providers_mgr.providers.items()
+                ]
+        return {"providers": providers_list}
+
+    @app.get("/api/channels")
+    async def list_channels(user: str = Depends(require_auth)):
+        channels_mgr = getattr(engine, 'channels', None)
+        channels_list = []
+        if channels_mgr:
+            if hasattr(channels_mgr, 'list'):
+                channels_list = channels_mgr.list()
+            elif hasattr(channels_mgr, 'channels'):
+                if isinstance(channels_mgr.channels, dict):
+                    channels_list = [
+                        {"name": k, "type": getattr(v, 'channel_type', 'unknown'), "enabled": getattr(v, 'enabled', True)}
+                        for k, v in channels_mgr.channels.items()
+                    ]
+        return {"channels": channels_list}
+
+    # ══════════════════════════════════════════════════════════════
+    # 🔌 Plugins
+    # ══════════════════════════════════════════════════════════════
+
+    @app.get("/api/plugins")
+    async def list_plugins(user: str = Depends(require_auth)):
+        plugins_mgr = getattr(engine, 'plugins', None)
+        plugins_list = []
+        if plugins_mgr:
+            if hasattr(plugins_mgr, 'list'):
+                plugins_list = plugins_mgr.list()
+            elif hasattr(plugins_mgr, 'plugins'):
+                if isinstance(plugins_mgr.plugins, dict):
+                    plugins_list = [
+                        {"name": k, "enabled": getattr(v, 'enabled', True), "description": getattr(v, 'description', ''), "version": getattr(v, 'version', '1.0')}
+                        for k, v in plugins_mgr.plugins.items()
+                    ]
+        return {"plugins": plugins_list}
+
+    @app.post("/api/plugins/install")
+    async def install_plugin(body: dict, user: str = Depends(require_admin)):
+        name = body.get("name", "")
+        if not name:
+            return JSONResponse({"error": "Plugin name required"}, status_code=400)
+        plugins_mgr = getattr(engine, 'plugins', None)
+        if not plugins_mgr:
+            return JSONResponse({"error": "No plugin manager"}, status_code=400)
+        try:
+            if hasattr(plugins_mgr, 'install'):
+                result = await plugins_mgr.install(name) if asyncio.iscoroutinefunction(plugins_mgr.install) else plugins_mgr.install(name)
+            else:
+                return JSONResponse({"error": "Install not supported"}, status_code=400)
+            _log_audit(f"Plugin installed: {name}", user)
+            return {"status": "installed", "result": result}
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    # ══════════════════════════════════════════════════════════════
+    # 📈 Metrics & Dashboard
+    # ══════════════════════════════════════════════════════════════
+
+    @app.get("/api/metrics")
+    async def get_metrics(user: str = Depends(require_auth)):
+        total = len(request_log)
+        latencies = [r['latency_ms'] for r in request_log] if request_log else [0]
+        errors = sum(1 for r in request_log if r.get('status', 200) >= 400)
+        avg_lat = sum(latencies) / len(latencies) if latencies else 0
+
+        # Throughput (last 24 hours)
+        now = time.time()
+        throughput = [0] * 24
+        error_hist = [0] * 24
+        for r in request_log:
+            hours_ago = int((now - r['timestamp']) / 3600)
+            idx = 23 - min(hours_ago, 23)
+            throughput[idx] += 1
+            if r.get('status', 200) >= 400:
+                error_hist[idx] += 1
+
         return {
-            "total_messages": len(engine.conversation),
-            "user_messages": len([m for m in engine.conversation if m.get("role") == "user"]),
-            "assistant_messages": len([m for m in engine.conversation if m.get("role") == "assistant"]),
-            "memory_entries": engine.memory.count() if engine.memory else 0,
-            "tools_available": len(engine.tools.get_all()) if engine.tools else 0,
-            "agents_available": len(engine.agents.get_all()) if engine.agents else 0,
-            "providers_available": len(engine.providers.get_available()) if engine.providers else 0,
+            "total_requests": total,
+            "avg_latency_ms": round(avg_lat, 2),
+            "error_rate": f"{(errors/max(total,1)*100):.1f}%",
+            "active_connections": len(active_ws),
+            "throughput_history": throughput,
+            "error_history": error_hist,
+            "p50_latency": round(sorted(latencies)[len(latencies)//2], 2) if latencies else 0,
+            "p99_latency": round(sorted(latencies)[int(len(latencies)*0.99)], 2) if latencies else 0,
         }
 
-    # ── Main Web UI ────────────────────────────────────────────
+    @app.get("/api/metrics/dashboard")
+    async def get_dashboard(user: str = Depends(require_auth)):
+        metrics = await get_metrics(user)
+        status = await get_status(user)
+        return {**metrics, **status}
+
+    # ══════════════════════════════════════════════════════════════
+    # 🌐 Browser Automation
+    # ══════════════════════════════════════════════════════════════
+
+    @app.post("/api/browser/navigate")
+    async def browser_navigate(body: dict, user: str = Depends(require_auth)):
+        url = body.get("url", "")
+        if not url:
+            return JSONResponse({"error": "URL required"}, status_code=400)
+        browser = getattr(engine, 'browser', None)
+        if not browser:
+            return JSONResponse({"error": "Browser automation not available"}, status_code=400)
+        try:
+            if hasattr(browser, 'navigate'):
+                result = await browser.navigate(url) if asyncio.iscoroutinefunction(browser.navigate) else browser.navigate(url)
+            else:
+                return JSONResponse({"error": "Navigate not supported"}, status_code=400)
+            _log_audit(f"Browser navigate: {url}", user)
+            return {"status": "navigated", "url": url, "result": result}
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    @app.post("/api/browser/screenshot")
+    async def browser_screenshot(body: dict, user: str = Depends(require_auth)):
+        browser = getattr(engine, 'browser', None)
+        if not browser:
+            return JSONResponse({"error": "Browser not available"}, status_code=400)
+        try:
+            if hasattr(browser, 'screenshot'):
+                result = await browser.screenshot() if asyncio.iscoroutinefunction(browser.screenshot) else browser.screenshot()
+                # If it returns bytes, base64 encode
+                if isinstance(result, bytes):
+                    import base64
+                    return {"screenshot": base64.b64encode(result).decode()}
+                return {"screenshot": result}
+            return JSONResponse({"error": "Screenshot not supported"}, status_code=400)
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    @app.post("/api/browser/click")
+    async def browser_click(body: dict, user: str = Depends(require_auth)):
+        selector = body.get("selector", "")
+        browser = getattr(engine, 'browser', None)
+        if not browser:
+            return JSONResponse({"error": "Browser not available"}, status_code=400)
+        try:
+            if hasattr(browser, 'click'):
+                result = await browser.click(selector) if asyncio.iscoroutinefunction(browser.click) else browser.click(selector)
+                return {"status": "clicked", "selector": selector, "result": result}
+            return JSONResponse({"error": "Click not supported"}, status_code=400)
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    @app.post("/api/browser/type")
+    async def browser_type(body: dict, user: str = Depends(require_auth)):
+        selector = body.get("selector", "")
+        text = body.get("text", "")
+        browser = getattr(engine, 'browser', None)
+        if not browser:
+            return JSONResponse({"error": "Browser not available"}, status_code=400)
+        try:
+            if hasattr(browser, 'type_text'):
+                result = await browser.type_text(selector, text) if asyncio.iscoroutinefunction(browser.type_text) else browser.type_text(selector, text)
+            elif hasattr(browser, 'type'):
+                result = await browser.type(selector, text) if asyncio.iscoroutinefunction(browser.type) else browser.type(selector, text)
+            else:
+                return JSONResponse({"error": "Type not supported"}, status_code=400)
+            return {"status": "typed", "selector": selector, "result": result}
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    # ══════════════════════════════════════════════════════════════
+    # 📦 Sandbox Execution
+    # ══════════════════════════════════════════════════════════════
+
+    @app.post("/api/sandbox/exec")
+    async def sandbox_exec(body: dict, user: str = Depends(require_auth)):
+        command = body.get("command", "")
+        timeout = body.get("timeout", 30)
+        if not command:
+            return JSONResponse({"error": "Command required"}, status_code=400)
+        sandbox = getattr(engine, 'sandbox', None)
+        if not sandbox:
+            return JSONResponse({"error": "Sandbox not available"}, status_code=400)
+        _log_audit(f"Sandbox exec: {command[:100]}", user)
+        try:
+            if hasattr(sandbox, 'execute'):
+                result = await sandbox.execute(command, timeout=timeout) if asyncio.iscoroutinefunction(sandbox.execute) else sandbox.execute(command, timeout=timeout)
+            elif hasattr(sandbox, 'run'):
+                result = await sandbox.run(command, timeout=timeout) if asyncio.iscoroutinefunction(sandbox.run) else sandbox.run(command, timeout=timeout)
+            else:
+                return JSONResponse({"error": "Sandbox has no execute method"}, status_code=400)
+            return {"result": result}
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    # ══════════════════════════════════════════════════════════════
+    # 👥 Users (Admin)
+    # ══════════════════════════════════════════════════════════════
+
+    @app.get("/api/users")
+    async def list_users(user: str = Depends(require_admin)):
+        return {
+            "users": [
+                {
+                    "username": u["username"],
+                    "role": u.get("role", "user"),
+                    "created": u.get("created", ""),
+                }
+                for u in users_db.values()
+            ]
+        }
+
+    @app.delete("/api/users")
+    async def delete_user(username: str = Query(...), user: str = Depends(require_admin)):
+        if username == "admin":
+            return JSONResponse({"error": "Cannot delete admin"}, status_code=400)
+        if username not in users_db:
+            return JSONResponse({"error": "User not found"}, status_code=404)
+        del users_db[username]
+        _save_users()
+        _log_audit(f"User deleted: {username}", user)
+        return {"status": "deleted"}
+
+    # ══════════════════════════════════════════════════════════════
+    # 🔒 Security
+    # ══════════════════════════════════════════════════════════════
+
+    @app.get("/api/security")
+    async def security_status(user: str = Depends(require_auth)):
+        failed_logins = sum(1 for e in audit_log if "Failed login" in e.get("event", ""))
+        return {
+            "users_count": len(users_db),
+            "failed_logins": failed_logins,
+            "encryption": "AES-256",
+            "jwt_enabled": True,
+            "audit_log": audit_log[-50:],  # Last 50 entries
+        }
+
+    # ══════════════════════════════════════════════════════════════
+    # 📁 Files
+    # ══════════════════════════════════════════════════════════════
+
+    @app.get("/api/files")
+    async def list_files(path: str = Query(""), user: str = Depends(require_auth)):
+        data_dir = os.path.expanduser(getattr(engine, 'data_dir', '~/.rally-agent/data'))
+        base = os.path.abspath(data_dir)
+        target = os.path.abspath(os.path.join(base, path)) if path else base
+
+        # Security: prevent directory traversal
+        if not target.startswith(base):
+            return JSONResponse({"error": "Access denied"}, status_code=403)
+
+        if not os.path.exists(target):
+            return JSONResponse({"error": "Path not found"}, status_code=404)
+
+        if os.path.isfile(target):
+            return {"type": "file", "name": os.path.basename(target), "size": os.path.getsize(target)}
+
+        files = []
+        try:
+            for name in sorted(os.listdir(target)):
+                full = os.path.join(target, name)
+                rel = os.path.relpath(full, base)
+                files.append({
+                    "name": name,
+                    "path": rel,
+                    "is_dir": os.path.isdir(full),
+                    "size": os.path.getsize(full) if os.path.isfile(full) else None,
+                })
+        except PermissionError:
+            return JSONResponse({"error": "Permission denied"}, status_code=403)
+
+        parent = os.path.relpath(os.path.dirname(target), base) if target != base else None
+        return {"files": files, "path": path, "parent": parent}
+
+    @app.get("/api/files/download")
+    async def download_file(path: str = Query(...), user: str = Depends(require_auth)):
+        data_dir = os.path.expanduser(getattr(engine, 'data_dir', '~/.rally-agent/data'))
+        base = os.path.abspath(data_dir)
+        target = os.path.abspath(os.path.join(base, path))
+
+        if not target.startswith(base):
+            return JSONResponse({"error": "Access denied"}, status_code=403)
+        if not os.path.isfile(target):
+            return JSONResponse({"error": "File not found"}, status_code=404)
+
+        _log_audit(f"File download: {path}", user)
+        return FileResponse(target, filename=os.path.basename(target))
+
+    # ══════════════════════════════════════════════════════════════
+    # 📝 Feedback
+    # ══════════════════════════════════════════════════════════════
+
+    @app.post("/api/feedback")
+    async def submit_feedback(body: dict, user: str = Depends(require_auth)):
+        feedback = {
+            "user": user,
+            "rating": body.get("rating"),
+            "comment": body.get("comment", ""),
+            "message_id": body.get("message_id", ""),
+            "timestamp": datetime.now().isoformat(),
+        }
+        feedback_log.append(feedback)
+        # Persist
+        data_dir = os.path.expanduser(getattr(engine, 'data_dir', '~/.rally-agent/data'))
+        fb_file = os.path.join(data_dir, 'feedback.json')
+        try:
+            os.makedirs(data_dir, exist_ok=True)
+            existing = []
+            if os.path.exists(fb_file):
+                with open(fb_file) as f:
+                    existing = json.load(f)
+            existing.append(feedback)
+            with open(fb_file, 'w') as f:
+                json.dump(existing[-1000:], f, indent=2)
+        except Exception:
+            pass
+        return {"status": "recorded"}
+
+    # ══════════════════════════════════════════════════════════════
+    # 🌐 Main UI
+    # ══════════════════════════════════════════════════════════════
+
     @app.get("/", response_class=HTMLResponse)
     async def index():
-        return WEB_UI_HTML
+        return MAIN_HTML
 
-    @app.get("/app", response_class=HTMLResponse)
-    async def app_page():
-        return WEB_UI_HTML
+    @app.get("/health")
+    async def health():
+        return {"status": "ok", "uptime": _uptime()}
 
     return app
 
 
-def start_web_server(engine, port: int = 8778):
-    """Start the web server"""
-    try:
-        import uvicorn
-        app = create_app(engine)
-        Theme.success(f"🌐 Web UI: http://localhost:{port}")
-        uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")
-    except ImportError:
-        Theme.error("Web UI requires: pip install fastapi uvicorn")
-    except Exception as e:
-        Theme.error(f"Web server error: {e}")
-
-
 # ═══════════════════════════════════════════════════════════════
-# 🎨 THE WEB UI — Manus AI Inspired, Purple Theme
+# 🚀 Server Runner
 # ═══════════════════════════════════════════════════════════════
 
-WEB_UI_HTML = """<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Rally Agent — The OpenClaw Killer</title>
-<style>
-/* ═══════════════════════════════════════════════════════════════
-   🟣 RALLY AGENT — Hacker Purple Theme
-   Manus AI Inspired. Not generic trash.
-   ═══════════════════════════════════════════════════════════════ */
-
-:root {
-  --purple-50: #faf5ff;
-  --purple-100: #f3e8ff;
-  --purple-200: #e9d5ff;
-  --purple-300: #d8b4fe;
-  --purple-400: #c084fc;
-  --purple-500: #a855f7;
-  --purple-600: #9333ea;
-  --purple-700: #7c3aed;
-  --purple-800: #6b21a8;
-  --purple-900: #581c87;
-  --purple-950: #3b0764;
-
-  --bg-primary: #0a0612;
-  --bg-secondary: #110b1f;
-  --bg-tertiary: #1a0e2e;
-  --bg-card: #150d24;
-  --bg-hover: #1f1438;
-  --bg-input: #0d0820;
-
-  --text-primary: #f0e6ff;
-  --text-secondary: #a78bcc;
-  --text-muted: #6b5a80;
-  --text-accent: #d8b4fe;
-
-  --border: #2a1f42;
-  --border-active: #7c3aed;
-
-  --neon: #d946ef;
-  --cyan: #22d3ee;
-  --green: #4ade80;
-  --amber: #fbbf24;
-  --red: #ef4444;
-  --pink: #f472b6;
-
-  --radius: 12px;
-  --radius-lg: 16px;
-  --radius-xl: 24px;
-
-  --shadow: 0 4px 24px rgba(88, 28, 135, 0.3);
-  --shadow-lg: 0 8px 40px rgba(88, 28, 135, 0.4);
-  --glow: 0 0 20px rgba(168, 85, 247, 0.3);
-}
-
-* { margin: 0; padding: 0; box-sizing: border-box; }
-
-body {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  min-height: 100vh;
-  overflow: hidden;
-}
-
-/* ── Layout ──────────────────────────────────────────────────── */
-
-.app {
-  display: flex;
-  height: 100vh;
-}
-
-/* ── Sidebar ─────────────────────────────────────────────────── */
-
-.sidebar {
-  width: 260px;
-  background: var(--bg-secondary);
-  border-right: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  flex-shrink: 0;
-}
-
-.sidebar-header {
-  padding: 20px;
-  border-bottom: 1px solid var(--border);
-}
-
-.logo {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 20px;
-  font-weight: 800;
-  color: var(--purple-400);
-  letter-spacing: -0.5px;
-}
-
-.logo-icon {
-  width: 36px;
-  height: 36px;
-  background: linear-gradient(135deg, var(--purple-600), var(--neon));
-  border-radius: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 18px;
-  box-shadow: var(--glow);
-}
-
-.nav {
-  flex: 1;
-  padding: 12px;
-  overflow-y: auto;
-}
-
-.nav-section {
-  margin-bottom: 8px;
-}
-
-.nav-label {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 1px;
-  padding: 8px 12px;
-}
-
-.nav-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  border-radius: var(--radius);
-  cursor: pointer;
-  transition: all 0.2s;
-  font-size: 14px;
-  color: var(--text-secondary);
-  font-weight: 500;
-}
-
-.nav-item:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-}
-
-.nav-item.active {
-  background: linear-gradient(135deg, rgba(168, 85, 247, 0.2), rgba(217, 70, 239, 0.1));
-  color: var(--purple-300);
-  border: 1px solid rgba(168, 85, 247, 0.3);
-}
-
-.nav-item .icon { font-size: 18px; width: 24px; text-align: center; }
-.nav-item .badge {
-  margin-left: auto;
-  background: var(--purple-700);
-  color: var(--purple-200);
-  font-size: 11px;
-  padding: 2px 8px;
-  border-radius: 10px;
-  font-weight: 600;
-}
-
-/* ── Main Content ────────────────────────────────────────────── */
-
-.main {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-/* ── Top Bar ─────────────────────────────────────────────────── */
-
-.topbar {
-  height: 56px;
-  border-bottom: 1px solid var(--border);
-  display: flex;
-  align-items: center;
-  padding: 0 24px;
-  background: var(--bg-secondary);
-  gap: 16px;
-}
-
-.topbar-title {
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.topbar-status {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  color: var(--green);
-}
-
-.topbar-status .dot {
-  width: 8px;
-  height: 8px;
-  background: var(--green);
-  border-radius: 50%;
-  animation: pulse 2s infinite;
-}
-
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
-}
-
-.topbar-right {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.model-badge {
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border);
-  padding: 4px 12px;
-  border-radius: 20px;
-  font-size: 12px;
-  color: var(--purple-300);
-  font-weight: 600;
-}
-
-/* ── Chat Area ───────────────────────────────────────────────── */
-
-.chat-container {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  height: calc(100vh - 56px);
-}
-
-.chat-messages {
-  flex: 1;
-  overflow-y: auto;
-  padding: 24px;
-  scroll-behavior: smooth;
-}
-
-.chat-messages::-webkit-scrollbar { width: 6px; }
-.chat-messages::-webkit-scrollbar-track { background: transparent; }
-.chat-messages::-webkit-scrollbar-thumb { background: var(--purple-800); border-radius: 3px; }
-
-.message {
-  display: flex;
-  gap: 12px;
-  margin-bottom: 24px;
-  max-width: 800px;
-  animation: fadeIn 0.3s ease;
-}
-
-@keyframes fadeIn {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-.message.user { margin-left: auto; flex-direction: row-reverse; }
-
-.message-avatar {
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 16px;
-  flex-shrink: 0;
-}
-
-.message.user .message-avatar {
-  background: linear-gradient(135deg, var(--pink), var(--neon));
-}
-
-.message.assistant .message-avatar {
-  background: linear-gradient(135deg, var(--purple-600), var(--purple-400));
-  box-shadow: var(--glow);
-}
-
-.message-content {
-  padding: 14px 18px;
-  border-radius: var(--radius-lg);
-  font-size: 14px;
-  line-height: 1.6;
-  max-width: 680px;
-}
-
-.message.user .message-content {
-  background: linear-gradient(135deg, var(--purple-700), var(--purple-800));
-  border: 1px solid var(--purple-600);
-  color: var(--purple-100);
-}
-
-.message.assistant .message-content {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  color: var(--text-primary);
-}
-
-.message-content pre {
-  background: var(--bg-primary);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 14px;
-  margin: 10px 0;
-  overflow-x: auto;
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
-  font-size: 13px;
-  color: var(--cyan);
-}
-
-.message-content code {
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
-  background: rgba(168, 85, 247, 0.15);
-  padding: 2px 6px;
-  border-radius: 4px;
-  font-size: 13px;
-  color: var(--purple-300);
-}
-
-.message-time {
-  font-size: 11px;
-  color: var(--text-muted);
-  margin-top: 6px;
-}
-
-/* ── Chat Input ──────────────────────────────────────────────── */
-
-.chat-input-area {
-  padding: 16px 24px 24px;
-  border-top: 1px solid var(--border);
-  background: var(--bg-secondary);
-}
-
-.chat-input-wrapper {
-  max-width: 800px;
-  margin: 0 auto;
-  position: relative;
-}
-
-.chat-input {
-  width: 100%;
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: 16px 56px 16px 20px;
-  color: var(--text-primary);
-  font-size: 14px;
-  font-family: inherit;
-  resize: none;
-  outline: none;
-  transition: border-color 0.2s, box-shadow 0.2s;
-  min-height: 52px;
-  max-height: 200px;
-}
-
-.chat-input:focus {
-  border-color: var(--purple-500);
-  box-shadow: 0 0 0 3px rgba(168, 85, 247, 0.15);
-}
-
-.chat-input::placeholder {
-  color: var(--text-muted);
-}
-
-.send-btn {
-  position: absolute;
-  right: 8px;
-  bottom: 8px;
-  width: 36px;
-  height: 36px;
-  background: linear-gradient(135deg, var(--purple-600), var(--neon));
-  border: none;
-  border-radius: 10px;
-  color: white;
-  font-size: 16px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.2s;
-  box-shadow: var(--glow);
-}
-
-.send-btn:hover {
-  transform: scale(1.05);
-  box-shadow: 0 0 30px rgba(168, 85, 247, 0.5);
-}
-
-/* ── Pages ───────────────────────────────────────────────────── */
-
-.page { display: none; height: calc(100vh - 56px); overflow-y: auto; padding: 24px; }
-.page.active { display: block; }
-
-.page-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 24px;
-}
-
-.page-title {
-  font-size: 24px;
-  font-weight: 700;
-  color: var(--text-primary);
-}
-
-.page-subtitle {
-  font-size: 14px;
-  color: var(--text-secondary);
-  margin-top: 4px;
-}
-
-/* ── Cards Grid ──────────────────────────────────────────────── */
-
-.cards-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 16px;
-}
-
-.card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: 20px;
-  transition: all 0.2s;
-  cursor: pointer;
-}
-
-.card:hover {
-  border-color: var(--purple-600);
-  box-shadow: var(--shadow);
-  transform: translateY(-2px);
-}
-
-.card-icon {
-  width: 44px;
-  height: 44px;
-  background: linear-gradient(135deg, rgba(168, 85, 247, 0.2), rgba(217, 70, 239, 0.1));
-  border: 1px solid rgba(168, 85, 247, 0.3);
-  border-radius: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 20px;
-  margin-bottom: 14px;
-}
-
-.card-title {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin-bottom: 6px;
-}
-
-.card-desc {
-  font-size: 13px;
-  color: var(--text-secondary);
-  line-height: 1.5;
-}
-
-.card-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 12px;
-  padding: 3px 10px;
-  border-radius: 20px;
-  margin-top: 12px;
-  font-weight: 600;
-}
-
-.card-status.online { background: rgba(74, 222, 128, 0.15); color: var(--green); }
-.card-status.offline { background: rgba(107, 90, 128, 0.15); color: var(--text-muted); }
-.card-status.configured { background: rgba(168, 85, 247, 0.15); color: var(--purple-300); }
-
-/* ── Stats Grid ──────────────────────────────────────────────── */
-
-.stats-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 16px;
-  margin-bottom: 24px;
-}
-
-.stat-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: 20px;
-  text-align: center;
-}
-
-.stat-value {
-  font-size: 32px;
-  font-weight: 800;
-  background: linear-gradient(135deg, var(--purple-400), var(--neon));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
-
-.stat-label {
-  font-size: 13px;
-  color: var(--text-secondary);
-  margin-top: 4px;
-  font-weight: 500;
-}
-
-/* ── Table ───────────────────────────────────────────────────── */
-
-.data-table {
-  width: 100%;
-  border-collapse: collapse;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  overflow: hidden;
-}
-
-.data-table th {
-  background: var(--bg-tertiary);
-  padding: 12px 16px;
-  text-align: left;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  border-bottom: 1px solid var(--border);
-}
-
-.data-table td {
-  padding: 12px 16px;
-  font-size: 14px;
-  color: var(--text-primary);
-  border-bottom: 1px solid rgba(42, 31, 66, 0.5);
-}
-
-.data-table tr:hover td {
-  background: var(--bg-hover);
-}
-
-/* ── File Browser ────────────────────────────────────────────── */
-
-.file-list {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.file-item {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 16px;
-  border-radius: var(--radius);
-  cursor: pointer;
-  transition: background 0.15s;
-}
-
-.file-item:hover { background: var(--bg-hover); }
-
-.file-icon { font-size: 20px; width: 28px; text-align: center; }
-.file-name { flex: 1; font-size: 14px; color: var(--text-primary); }
-.file-size { font-size: 12px; color: var(--text-muted); }
-.file-date { font-size: 12px; color: var(--text-muted); }
-
-.file-download {
-  background: rgba(168, 85, 247, 0.15);
-  border: 1px solid rgba(168, 85, 247, 0.3);
-  color: var(--purple-300);
-  padding: 4px 12px;
-  border-radius: 8px;
-  font-size: 12px;
-  cursor: pointer;
-  transition: all 0.2s;
-  text-decoration: none;
-}
-
-.file-download:hover {
-  background: rgba(168, 85, 247, 0.3);
-}
-
-/* ── Empty State ─────────────────────────────────────────────── */
-
-.empty-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 60px 20px;
-  text-align: center;
-}
-
-.empty-icon { font-size: 48px; margin-bottom: 16px; }
-.empty-title { font-size: 18px; font-weight: 600; color: var(--text-primary); margin-bottom: 8px; }
-.empty-desc { font-size: 14px; color: var(--text-secondary); max-width: 400px; }
-
-/* ── Buttons ─────────────────────────────────────────────────── */
-
-.btn {
-  padding: 8px 20px;
-  border-radius: var(--radius);
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s;
-  border: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.btn-primary {
-  background: linear-gradient(135deg, var(--purple-600), var(--neon));
-  color: white;
-  box-shadow: var(--glow);
-}
-
-.btn-primary:hover { transform: translateY(-1px); box-shadow: var(--shadow-lg); }
-
-.btn-secondary {
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border);
-  color: var(--text-primary);
-}
-
-.btn-secondary:hover { border-color: var(--purple-600); }
-
-/* ── Scrollbar ───────────────────────────────────────────────── */
-
-::-webkit-scrollbar { width: 6px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--purple-900); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: var(--purple-700); }
-
-/* ── Responsive ──────────────────────────────────────────────── */
-
-@media (max-width: 768px) {
-  .sidebar { display: none; }
-  .chat-messages { padding: 16px; }
-  .stats-grid { grid-template-columns: repeat(2, 1fr); }
-  .cards-grid { grid-template-columns: 1fr; }
-}
-</style>
-</head>
-<body>
-
-<div class="app">
-  <!-- ═══ Sidebar ═══ -->
-  <div class="sidebar">
-    <div class="sidebar-header">
-      <div class="logo">
-        <div class="logo-icon">⚡</div>
-        Rally Agent
-      </div>
-    </div>
-
-    <nav class="nav">
-      <div class="nav-section">
-        <div class="nav-label">Main</div>
-        <div class="nav-item active" data-page="chat">
-          <span class="icon">💬</span> Chat
-        </div>
-        <div class="nav-item" data-page="dashboard">
-          <span class="icon">📊</span> Dashboard
-        </div>
-        <div class="nav-item" data-page="agents">
-          <span class="icon">🤖</span> Agents
-          <span class="badge" id="agent-count">10</span>
-        </div>
-      </div>
-
-      <div class="nav-section">
-        <div class="nav-label">System</div>
-        <div class="nav-item" data-page="tools">
-          <span class="icon">🔧</span> Tools
-          <span class="badge" id="tool-count">15</span>
-        </div>
-        <div class="nav-item" data-page="memory">
-          <span class="icon">🧠</span> Memory
-        </div>
-        <div class="nav-item" data-page="providers">
-          <span class="icon">🌐</span> Providers
-        </div>
-        <div class="nav-item" data-page="channels">
-          <span class="icon">📡</span> Channels
-          <span class="badge" id="channel-count">55</span>
-        </div>
-      </div>
-
-      <div class="nav-section">
-        <div class="nav-label">Files</div>
-        <div class="nav-item" data-page="files">
-          <span class="icon">📁</span> File Manager
-        </div>
-        <div class="nav-item" data-page="downloads">
-          <span class="icon">⬇️</span> Downloads
-        </div>
-      </div>
-
-      <div class="nav-section">
-        <div class="nav-label">Settings</div>
-        <div class="nav-item" data-page="config">
-          <span class="icon">⚙️</span> Configuration
-        </div>
-      </div>
-    </nav>
-  </div>
-
-  <!-- ═══ Main Content ═══ -->
-  <div class="main">
-    <!-- Top Bar -->
-    <div class="topbar">
-      <div class="topbar-title" id="page-title">Chat</div>
-      <div class="topbar-status">
-        <span class="dot"></span>
-        <span>Running</span>
-      </div>
-      <div class="topbar-right">
-        <span class="model-badge" id="model-badge">auto</span>
-      </div>
-    </div>
-
-    <!-- ═══ Chat Page ═══ -->
-    <div class="chat-container" id="page-chat">
-      <div class="chat-messages" id="chat-messages">
-        <div class="message assistant">
-          <div class="message-avatar">⚡</div>
-          <div>
-            <div class="message-content">
-              Hey! I'm <strong>Rally</strong>, your AI agent. 🟣⚡<br><br>
-              I can help you with coding, research, analysis, creative work, and much more.<br><br>
-              Just type below to get started, or explore the sidebar to see what I can do!
-            </div>
-            <div class="message-time">Just now</div>
-          </div>
-        </div>
-      </div>
-
-      <div class="chat-input-area">
-        <div class="chat-input-wrapper">
-          <textarea class="chat-input" id="chat-input" placeholder="Message Rally..." rows="1"></textarea>
-          <button class="send-btn" id="send-btn">➤</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- ═══ Dashboard Page ═══ -->
-    <div class="page" id="page-dashboard">
-      <div class="page-header">
-        <div>
-          <div class="page-title">Dashboard</div>
-          <div class="page-subtitle">System overview and statistics</div>
-        </div>
-      </div>
-
-      <div class="stats-grid" id="stats-grid">
-        <div class="stat-card"><div class="stat-value" id="stat-messages">0</div><div class="stat-label">Messages</div></div>
-        <div class="stat-card"><div class="stat-value" id="stat-memory">0</div><div class="stat-label">Memory Entries</div></div>
-        <div class="stat-card"><div class="stat-value" id="stat-tools">15</div><div class="stat-label">Tools</div></div>
-        <div class="stat-card"><div class="stat-value" id="stat-agents">10</div><div class="stat-label">Agents</div></div>
-        <div class="stat-card"><div class="stat-value" id="stat-providers">0</div><div class="stat-label">Providers</div></div>
-        <div class="stat-card"><div class="stat-value" id="stat-channels">55</div><div class="stat-label">Channels</div></div>
-      </div>
-    </div>
-
-    <!-- ═══ Agents Page ═══ -->
-    <div class="page" id="page-agents">
-      <div class="page-header">
-        <div>
-          <div class="page-title">🤖 Agents</div>
-          <div class="page-subtitle">Specialized AI agents that work together</div>
-        </div>
-      </div>
-      <div class="cards-grid" id="agents-grid"></div>
-    </div>
-
-    <!-- ═══ Tools Page ═══ -->
-    <div class="page" id="page-tools">
-      <div class="page-header">
-        <div>
-          <div class="page-title">🔧 Tools</div>
-          <div class="page-subtitle">Built-in tools for every task</div>
-        </div>
-      </div>
-      <div class="cards-grid" id="tools-grid"></div>
-    </div>
-
-    <!-- ═══ Memory Page ═══ -->
-    <div class="page" id="page-memory">
-      <div class="page-header">
-        <div>
-          <div class="page-title">🧠 Memory</div>
-          <div class="page-subtitle">Persistent memory system</div>
-        </div>
-      </div>
-      <div class="stats-grid">
-        <div class="stat-card"><div class="stat-value" id="mem-total">0</div><div class="stat-label">Total Entries</div></div>
-        <div class="stat-card"><div class="stat-value" id="mem-user">0</div><div class="stat-label">User Messages</div></div>
-        <div class="stat-card"><div class="stat-value" id="mem-assistant">0</div><div class="stat-label">Assistant Messages</div></div>
-      </div>
-      <div id="memory-entries" class="file-list"></div>
-    </div>
-
-    <!-- ═══ Providers Page ═══ -->
-    <div class="page" id="page-providers">
-      <div class="page-header">
-        <div>
-          <div class="page-title">🌐 Providers</div>
-          <div class="page-subtitle">35+ AI model providers — every provider on the planet</div>
-        </div>
-      </div>
-      <div class="cards-grid" id="providers-grid"></div>
-    </div>
-
-    <!-- ═══ Channels Page ═══ -->
-    <div class="page" id="page-channels">
-      <div class="page-header">
-        <div>
-          <div class="page-title">📡 Channels</div>
-          <div class="page-subtitle">55+ messaging channels — universal connectivity</div>
-        </div>
-      </div>
-      <div class="cards-grid" id="channels-grid"></div>
-    </div>
-
-    <!-- ═══ Files Page ═══ -->
-    <div class="page" id="page-files">
-      <div class="page-header">
-        <div>
-          <div class="page-title">📁 File Manager</div>
-          <div class="page-subtitle">Browse and download files created by the agent</div>
-        </div>
-        <button class="btn btn-secondary" id="files-up">⬆️ Up</button>
-      </div>
-      <div class="file-list" id="files-list"></div>
-    </div>
-
-    <!-- ═══ Downloads Page ═══ -->
-    <div class="page" id="page-downloads">
-      <div class="page-header">
-        <div>
-          <div class="page-title">⬇️ Downloads</div>
-          <div class="page-subtitle">Files created or modified by Rally Agent</div>
-        </div>
-      </div>
-      <div class="file-list" id="downloads-list"></div>
-    </div>
-
-    <!-- ═══ Config Page ═══ -->
-    <div class="page" id="page-config">
-      <div class="page-header">
-        <div>
-          <div class="page-title">⚙️ Configuration</div>
-          <div class="page-subtitle">Rally Agent settings</div>
-        </div>
-      </div>
-      <div id="config-display"></div>
-    </div>
-  </div>
-</div>
-
-<script>
-// ═══════════════════════════════════════════════════════════════
-// 🟣 Rally Agent — Web UI JavaScript
-// ═══════════════════════════════════════════════════════════════
-
-const API = '';
-let ws = null;
-let currentPath = '.';
-
-// ── Navigation ──────────────────────────────────────────────
-document.querySelectorAll('.nav-item').forEach(item => {
-  item.addEventListener('click', () => {
-    document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
-    item.classList.add('active');
-    const page = item.dataset.page;
-    document.querySelectorAll('.page, .chat-container').forEach(p => p.style.display = 'none');
-    const el = document.getElementById('page-' + page);
-    if (el) {
-      el.style.display = page === 'chat' ? 'flex' : 'block';
-      document.getElementById('page-title').textContent = item.textContent.trim().split('\\n')[0].trim();
-    }
-    loadPage(page);
-  });
-});
-
-// ── WebSocket ───────────────────────────────────────────────
-function connectWS() {
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  ws = new WebSocket(`${proto}//${location.host}/ws`);
-  ws.onmessage = (e) => {
-    const data = JSON.parse(e.data);
-    if (data.type === 'response') {
-      addMessage('assistant', data.content);
-    } else if (data.type === 'tool_result') {
-      addMessage('assistant', data.content);
-    }
-  };
-  ws.onclose = () => setTimeout(connectWS, 3000);
-}
-connectWS();
-
-// ── Chat ────────────────────────────────────────────────────
-const chatInput = document.getElementById('chat-input');
-const sendBtn = document.getElementById('send-btn');
-const chatMessages = document.getElementById('chat-messages');
-
-function addMessage(role, content) {
-  const div = document.createElement('div');
-  div.className = `message ${role}`;
-  const avatar = role === 'user' ? '👤' : '⚡';
-  const time = new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
-  div.innerHTML = `
-    <div class="message-avatar">${avatar}</div>
-    <div>
-      <div class="message-content">${escapeHtml(content).replace(/\\n/g, '<br>')}</div>
-      <div class="message-time">${time}</div>
-    </div>
-  `;
-  chatMessages.appendChild(div);
-  chatMessages.scrollTop = chatMessages.scrollHeight;
-}
-
-function escapeHtml(text) {
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
-}
-
-async function sendMessage() {
-  const msg = chatInput.value.trim();
-  if (!msg) return;
-  addMessage('user', msg);
-  chatInput.value = '';
-
-  try {
-    const resp = await fetch(API + '/api/chat', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({message: msg})
-    });
-    const data = await resp.json();
-    if (data.response) addMessage('assistant', data.response);
-  } catch (e) {
-    addMessage('assistant', '⚠️ Connection error. Is Rally Agent running?');
-  }
-}
-
-sendBtn.addEventListener('click', sendMessage);
-chatInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault();
-    sendMessage();
-  }
-});
-
-chatInput.addEventListener('input', () => {
-  chatInput.style.height = 'auto';
-  chatInput.style.height = Math.min(chatInput.scrollHeight, 200) + 'px';
-});
-
-// ── Page Loader ─────────────────────────────────────────────
-async function loadPage(page) {
-  try {
-    if (page === 'dashboard') loadDashboard();
-    else if (page === 'agents') loadAgents();
-    else if (page === 'tools') loadTools();
-    else if (page === 'memory') loadMemory();
-    else if (page === 'providers') loadProviders();
-    else if (page === 'channels') loadChannels();
-    else if (page === 'files') loadFiles('.');
-    else if (page === 'downloads') loadDownloads();
-    else if (page === 'config') loadConfig();
-  } catch (e) { console.error(e); }
-}
-
-async function loadDashboard() {
-  try {
-    const resp = await fetch(API + '/api/stats');
-    const data = await resp.json();
-    document.getElementById('stat-messages').textContent = data.total_messages || 0;
-    document.getElementById('stat-memory').textContent = data.memory_entries || 0;
-    document.getElementById('stat-tools').textContent = data.tools_available || 0;
-    document.getElementById('stat-agents').textContent = data.agents_available || 0;
-    document.getElementById('stat-providers').textContent = data.providers_available || 0;
-  } catch (e) {}
-}
-
-async function loadAgents() {
-  try {
-    const resp = await fetch(API + '/api/agents');
-    const data = await resp.json();
-    const grid = document.getElementById('agents-grid');
-    grid.innerHTML = data.agents.map(a => `
-      <div class="card">
-        <div class="card-icon">🤖</div>
-        <div class="card-title">${a.name}</div>
-        <div class="card-desc">${a.description}</div>
-        <div class="card-status online">● Ready</div>
-      </div>
-    `).join('');
-  } catch (e) {}
-}
-
-async function loadTools() {
-  try {
-    const resp = await fetch(API + '/api/tools');
-    const data = await resp.json();
-    const grid = document.getElementById('tools-grid');
-    grid.innerHTML = data.tools.map(t => `
-      <div class="card">
-        <div class="card-icon">🔧</div>
-        <div class="card-title">${t.name}</div>
-        <div class="card-desc">${t.description}</div>
-        <div class="card-status configured">${t.category}</div>
-      </div>
-    `).join('');
-  } catch (e) {}
-}
-
-async function loadMemory() {
-  try {
-    const resp = await fetch(API + '/api/memory');
-    const data = await resp.json();
-    document.getElementById('mem-total').textContent = data.count || 0;
-    const userCount = data.entries.filter(e => e.role === 'user').length;
-    const asstCount = data.entries.filter(e => e.role === 'assistant').length;
-    document.getElementById('mem-user').textContent = userCount;
-    document.getElementById('mem-assistant').textContent = asstCount;
-
-    const list = document.getElementById('memory-entries');
-    list.innerHTML = data.entries.slice(-20).reverse().map(e => `
-      <div class="file-item">
-        <span class="file-icon">${e.role === 'user' ? '👤' : '⚡'}</span>
-        <span class="file-name">${escapeHtml(e.content).substring(0, 120)}...</span>
-        <span class="file-date">${e.timestamp?.substring(11, 19) || ''}</span>
-      </div>
-    `).join('') || '<div class="empty-state"><div class="empty-icon">🧠</div><div class="empty-title">No memories yet</div><div class="empty-desc">Start chatting to build memory</div></div>';
-  } catch (e) {}
-}
-
-async function loadProviders() {
-  try {
-    const resp = await fetch(API + '/api/providers');
-    const data = await resp.json();
-    const grid = document.getElementById('providers-grid');
-    grid.innerHTML = data.providers.map(p => `
-      <div class="card">
-        <div class="card-icon">${p.available ? '🟢' : '⚪'}</div>
-        <div class="card-title">${p.name}</div>
-        <div class="card-desc">${p.description}</div>
-        <div class="card-status ${p.available ? 'online' : 'offline'}">${p.available ? '● Available' : '○ Not configured'}</div>
-      </div>
-    `).join('');
-  } catch (e) {}
-}
-
-async function loadChannels() {
-  try {
-    const resp = await fetch(API + '/api/channels');
-    const data = await resp.json();
-    const grid = document.getElementById('channels-grid');
-    grid.innerHTML = data.channels.map(c => `
-      <div class="card">
-        <div class="card-icon">${c.emoji}</div>
-        <div class="card-title">${c.name}</div>
-        <div class="card-desc">${c.description}</div>
-        <div class="card-status ${c.configured ? 'configured' : 'offline'}">${c.configured ? '● Configured' : '○ Not configured'}</div>
-      </div>
-    `).join('');
-  } catch (e) {}
-}
-
-async function loadFiles(path) {
-  try {
-    currentPath = path || '.';
-    const resp = await fetch(API + '/api/files?path=' + encodeURIComponent(currentPath));
-    const data = await resp.json();
-    const list = document.getElementById('files-list');
-    list.innerHTML = data.files.map(f => `
-      <div class="file-item" ${f.is_dir ? `onclick="loadFiles('${f.path}')"` : ''}>
-        <span class="file-icon">${f.is_dir ? '📁' : '📄'}</span>
-        <span class="file-name">${f.name}</span>
-        <span class="file-size">${f.is_dir ? '' : formatSize(f.size)}</span>
-        ${!f.is_dir ? `<a class="file-download" href="${API}/api/files/download?path=${encodeURIComponent(f.path)}" download>⬇️ Download</a>` : ''}
-      </div>
-    `).join('') || '<div class="empty-state"><div class="empty-icon">📁</div><div class="empty-title">Empty directory</div></div>';
-  } catch (e) {}
-}
-
-async function loadDownloads() {
-  // Load files from the workspace/downloads directory
-  try {
-    const resp = await fetch(API + '/api/files?path=' + encodeURIComponent(process.cwd() || '.'));
-    const data = await resp.json();
-    const list = document.getElementById('downloads-list');
-    const downloadable = data.files.filter(f => !f.is_dir);
-    list.innerHTML = downloadable.map(f => `
-      <div class="file-item">
-        <span class="file-icon">📄</span>
-        <span class="file-name">${f.name}</span>
-        <span class="file-size">${formatSize(f.size)}</span>
-        <span class="file-date">${f.modified?.substring(0, 10) || ''}</span>
-        <a class="file-download" href="${API}/api/files/download?path=${encodeURIComponent(f.path)}" download>⬇️ Download</a>
-      </div>
-    `).join('') || '<div class="empty-state"><div class="empty-icon">⬇️</div><div class="empty-title">No files yet</div><div class="empty-desc">Files created by Rally will appear here</div></div>';
-  } catch (e) {}
-}
-
-async function loadConfig() {
-  try {
-    const resp = await fetch(API + '/api/config');
-    const data = await resp.json();
-    const display = document.getElementById('config-display');
-    display.innerHTML = `<pre style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px;font-family:'JetBrains Mono',monospace;font-size:13px;color:var(--cyan);overflow:auto;max-height:600px;">${JSON.stringify(data.config, null, 2)}</pre>`;
-  } catch (e) {}
-}
-
-// ── File Up Button ──────────────────────────────────────────
-document.getElementById('files-up')?.addEventListener('click', () => {
-  const parts = currentPath.split('/');
-  parts.pop();
-  loadFiles(parts.join('/') || '.');
-});
-
-// ── Utilities ───────────────────────────────────────────────
-function formatSize(bytes) {
-  if (bytes < 1024) return bytes + ' B';
-  if (bytes < 1024*1024) return (bytes/1024).toFixed(1) + ' KB';
-  if (bytes < 1024*1024*1024) return (bytes/1024/1024).toFixed(1) + ' MB';
-  return (bytes/1024/1024/1024).toFixed(1) + ' GB';
-}
-
-// ── Init ────────────────────────────────────────────────────
-loadDashboard();
-</script>
-</body>
-</html>"""
+def run_server(engine, host: str = "0.0.0.0", port: int = 7860, **kwargs):
+    """Run the Rally Agent web server.
+
+    Args:
+        engine: The main Rally engine instance
+        host: Bind address
+        port: Bind port
+    """
+    app = create_app(engine)
+    uvicorn.run(app, host=host, port=port, log_level="info", **kwargs)

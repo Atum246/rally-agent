@@ -1,53 +1,69 @@
-# Rally Agent — Dependencies
-# The OpenClaw Killer 💀
-# Every dependency you'll ever need.
+# ═══════════════════════════════════════════════════════════════
+# 🟣 RALLY AGENT — Requirements
+# "The OpenClaw Killer" — All features, all providers
+# ═══════════════════════════════════════════════════════════════
 
-# ═══ Core (Required) ═══════════════════════════════════════
-rich>=13.7.0
+# ── Core (required) ──────────────────────────────────────────
 httpx>=0.27.0
-prompt-toolkit>=3.0.43
+rich>=13.7.0
+prompt_toolkit>=3.0.43
+pyyaml>=6.0.1
 tomli>=2.0.1;python_version<"3.11"
 
-# ═══ Web UI ════════════════════════════════════════════════
-fastapi>=0.108.0
-uvicorn>=0.25.0
+# ── Web Server ───────────────────────────────────────────────
+fastapi>=0.110.0
+uvicorn>=0.29.0
 websockets>=12.0
+python-multipart>=0.0.9
+pyjwt>=2.8.0
+bcrypt>=4.1.2
 
-# ═══ System Monitoring ═════════════════════════════════════
-psutil>=5.9.0
+# ── Security ─────────────────────────────────────────────────
+cryptography>=42.0.0
 
-# ═══ Web & Browser ═════════════════════════════════════════
-beautifulsoup4>=4.12.0
-lxml>=5.0.0
+# ── Browser Automation ───────────────────────────────────────
+playwright>=1.42.0
 
-# ═══ Async ═════════════════════════════════════════════════
-aiofiles>=23.2.0
+# ── Voice ────────────────────────────────────────────────────
+edge-tts>=6.1.9
 
-# ═══ Optional — Enhanced Features ══════════════════════════
-# Uncomment as needed:
+# ── Document Processing ──────────────────────────────────────
+beautifulsoup4>=4.12.3
+markdown>=3.5.2
 
-# Browser automation
-# playwright>=1.40.0
+# ── Data & Analysis ──────────────────────────────────────────
+numpy>=1.26.4
 
-# Vector Memory (semantic search)
-# chromadb>=0.4.0
-# sentence-transformers>=2.2.0
+# ── Optional: Vector Memory & RAG ────────────────────────────
+# chromadb>=0.4.22
+# sentence-transformers>=2.5.1
 
-# Voice
+# ── Optional: Advanced Voice ─────────────────────────────────
 # openai-whisper>=20231117
-# pyttsx3>=2.90
+# TTS>=0.22.0
+# openwakeword>=0.6.0
+# porcupine>=3.0.0
 
-# Image generation
-# diffusers>=0.25.0
-# Pillow>=10.0.0
+# ── Optional: Browser Automation Alt ─────────────────────────
+# selenium>=4.18.1
 
-# Database
-# sqlalchemy>=2.0.0
-# redis>=5.0.0
+# ── Optional: Document Processing ────────────────────────────
+# PyPDF2>=3.0.1
+# pdfplumber>=0.11.0
+# python-docx>=1.1.0
 
-# MQTT (IoT)
-# paho-mqtt>=1.6.0
+# ── Optional: Database Skills ────────────────────────────────
+# psycopg2-binary>=2.9.9
+# redis>=5.0.1
 
-# Testing
-# pytest>=7.4.0
-# pytest-asyncio>=0.23.0
+# ── Optional: Image Processing ───────────────────────────────
+# Pillow>=10.2.0
+# reportlab>=4.1.0
+
+# ── Optional: Fine-tuning ────────────────────────────────────
+# datasets>=2.18.0
+# transformers>=4.38.2
+# torch>=2.2.0
+# peft>=0.10.0
+# trl>=0.8.1
+# bitsandbytes>=0.43.0

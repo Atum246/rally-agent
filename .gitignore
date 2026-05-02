@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+.rally-agent/
+*.egg-info/
+.venv/
