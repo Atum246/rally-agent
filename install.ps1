@@ -288,6 +288,12 @@ function Get-RallySource {
         Pop-Location
         Ok "Repository updated"
     } else {
+        # If directory exists but isn't a git repo, clean it first
+        if ((Test-Path $RALLY_HOME) -and (Get-ChildItem -Path $RALLY_HOME -Force | Select-Object -First 1)) {
+            Log "Directory exists but is not a git repo — cleaning..."
+            Remove-Item -Recurse -Force $RALLY_HOME
+            New-Item -ItemType Directory -Path $RALLY_HOME -Force | Out-Null
+        }
         Log "Cloning from $REPO_URL..."
         & git clone --depth 1 $REPO_URL $RALLY_HOME
         Ok "Repository cloned"

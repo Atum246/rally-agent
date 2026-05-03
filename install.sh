@@ -410,6 +410,12 @@ clone_or_copy_repo() {
         (cd "$RALLY_HOME" && git pull --ff-only 2>/dev/null) || true
         ok "Repository updated"
     else
+        # If directory exists but isn't a git repo, clean it first
+        if [ -d "$RALLY_HOME" ] && [ "$(ls -A "$RALLY_HOME" 2>/dev/null)" ]; then
+            log "Directory exists but is not a git repo — cleaning..."
+            rm -rf "$RALLY_HOME"
+            mkdir -p "$RALLY_HOME"
+        fi
         log "Cloning from ${REPO_URL}..."
         run_with_spinner "Cloning repository" git clone --depth 1 "$REPO_URL" "$RALLY_HOME"
         ok "Repository cloned"
