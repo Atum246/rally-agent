@@ -1132,6 +1132,153 @@ See [LICENSE](LICENSE) for details.
 
 ---
 
+## ❓ Troubleshooting
+
+### Install: "destination path already exists and is not an empty directory"
+
+This happens when a previous install left behind a non-empty `~/.rally-agent` directory.
+
+**Windows (PowerShell):**
+```powershell
+Remove-Item -Recurse -Force ~/.rally-agent
+irm https://raw.githubusercontent.com/Atum246/rally-agent/main/install.ps1 | iex
+```
+
+**Windows (Command Prompt — cmd.exe):**
+```cmd
+rmdir /s /q "%USERPROFILE%\.rally-agent"
+```
+Then run the installer from PowerShell (not Command Prompt).
+
+**Linux / macOS:**
+```bash
+rm -rf ~/.rally-agent
+curl -fsSL https://raw.githubusercontent.com/Atum246/rally-agent/main/install.sh | bash
+```
+
+> **Note:** The install script is a PowerShell script (`.ps1`). You must run it from **PowerShell**, not Command Prompt. If you're in `cmd.exe`, type `powershell` first to switch.
+
+---
+
+### Install: "'Remove-Item' is not recognized"
+
+You're in **Command Prompt** (cmd.exe), not PowerShell. The install script requires PowerShell.
+
+```cmd
+:: Switch to PowerShell first
+powershell
+
+:: Then run the installer
+irm https://raw.githubusercontent.com/Atum246/rally-agent/main/install.ps1 | iex
+```
+
+---
+
+### Install: "Python not found" or "python is not recognized"
+
+Rally Agent requires Python 3.10+. Install it from [python.org](https://python.org/downloads/) and make sure to check **"Add Python to PATH"** during installation.
+
+**Verify Python is installed:**
+```powershell
+python --version
+```
+
+If you have Python installed but it's not found, try:
+```powershell
+py --version
+```
+
+---
+
+### Install: "pip is not trusted" or "externally-managed-environment"
+
+This happens on newer Python versions with PEP 668. Use a virtual environment:
+
+```bash
+python -m venv ~/.rally-agent/.venv
+source ~/.rally-agent/.venv/bin/activate  # Linux/macOS
+# or
+~\.rally-agent\.\Scripts\activate  # Windows
+
+pip install -e .
+```
+
+---
+
+### Web UI: "Web UI requires: pip install fastapi uvicorn python-multipart pyjwt"
+
+Install the web dependencies:
+```bash
+pip install fastapi uvicorn python-multipart pyjwt
+```
+
+Or install everything at once:
+```bash
+pip install -e ".[all]"
+```
+
+---
+
+### Runtime: "No AI providers configured"
+
+Set at least one API key:
+```bash
+export OPENAI_API_KEY="sk-..."
+# or
+export ANTHROPIC_API_KEY="sk-ant-..."
+# or
+export GOOGLE_API_KEY="AIza..."
+```
+
+Or use local models with Ollama (no API key needed):
+```bash
+ollama pull llama3.2
+```
+
+---
+
+### Runtime: "Rate limited" errors
+
+You've hit the API rate limit for your provider. Solutions:
+1. **Add more providers** — Rally automatically falls back to the next available provider
+2. **Use a faster provider** — Groq, Cerebras, or SambaNova have higher limits
+3. **Use local models** — Ollama has no rate limits
+
+---
+
+### Docker: "port is already allocated"
+
+Another service is using port 8778. Change the port:
+```bash
+RALLY_PORT=9000 docker-compose up -d
+```
+
+Or edit `docker-compose.yml` and change the port mapping.
+
+---
+
+### General: "command not found: rally"
+
+The `rally` command isn't in your PATH. Either:
+1. **Activate the virtual environment:**
+   ```bash
+   source ~/.rally-agent/.venv/bin/activate
+   ```
+2. **Run directly:**
+   ```bash
+   python ~/.rally-agent/rally.py
+   ```
+
+---
+
+### Still stuck?
+
+- 📖 [Documentation](https://github.com/Atum246/rally-agent#readme)
+- 🐛 [Report a Bug](https://github.com/Atum246/rally-agent/issues)
+- 💬 [Discussions](https://github.com/Atum246/rally-agent/discussions)
+
+---
+
 ## 🙏 Credits
 
 Built with 💜 by the Rally Labs team.
