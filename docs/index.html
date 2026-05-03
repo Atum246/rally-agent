@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rally Agent — Your AI. Your Rules. Your Data.</title>
+<meta name="description" content="Self-hosted AI agent platform with 36 providers, 52 channels, swarm intelligence, and persistent memory. Open source.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --white:#ffffff;--gray-50:#f9fafb;--gray-100:#f3f4f6;--gray-200:#e5e7eb;
+  --gray-300:#d1d5db;--gray-400:#9ca3af;--gray-500:#6b7280;--gray-600:#4b5563;
+  --gray-700:#374151;--gray-800:#1f2937;--gray-900:#111827;
+  --orange-500:#f97316;--orange-600:#ea580c;--orange-100:rgba(249,115,22,0.1);
+  --indigo-500:#6366f1;--indigo-100:rgba(99,102,241,0.1);
+  --green-500:#10b981;--green-100:rgba(16,185,129,0.1);
+  --font:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+}
+html{scroll-behavior:smooth;font-size:16px}
+body{font-family:var(--font);color:var(--gray-800);background:var(--white);line-height:1.6;overflow-x:hidden}
+img{max-width:100%;display:block}
+a{color:inherit;text-decoration:none}
+.container{max-width:1200px;margin:0 auto;padding:0 24px}
+
+/* ═══════ NAVIGATION ═══════ */
+nav{position:fixed;top:0;left:0;right:0;z-index:1000;background:rgba(255,255,255,0.85);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-bottom:1px solid var(--gray-200);transition:box-shadow .3s}
+nav.scrolled{box-shadow:0 1px 3px rgba(0,0,0,0.08)}
+.nav-inner{max-width:1200px;margin:0 auto;padding:0 24px;display:flex;align-items:center;justify-content:space-between;height:64px}
+.nav-logo{display:flex;align-items:center;gap:8px;font-weight:700;font-size:1.15rem;color:var(--gray-900)}
+.nav-logo span{color:var(--orange-500)}
+.nav-links{display:flex;align-items:center;gap:32px}
+.nav-links a{font-size:0.9rem;font-weight:500;color:var(--gray-600);transition:color .2s}
+.nav-links a:hover{color:var(--gray-900)}
+.nav-cta{display:inline-flex;align-items:center;gap:6px;padding:8px 18px;background:var(--gray-900);color:var(--white)!important;border-radius:8px;font-size:0.85rem;font-weight:500;transition:all .2s}
+.nav-cta:hover{background:var(--gray-700);transform:translateY(-1px)}
+.nav-mobile{display:none;background:none;border:none;font-size:1.4rem;color:var(--gray-700);cursor:pointer}
+
+/* ═══════ HERO ═══════ */
+.hero{padding:140px 0 100px;text-align:center;background:linear-gradient(180deg,var(--white) 0%,var(--gray-50) 100%)}
+.hero-badge{display:inline-flex;align-items:center;gap:8px;padding:6px 16px;background:var(--orange-100);border:1px solid rgba(249,115,22,0.2);border-radius:100px;font-size:0.8rem;font-weight:500;color:var(--orange-600);margin-bottom:24px;animation:fadeUp .6s ease}
+.hero-badge::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--orange-500);animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+.hero h1{font-size:clamp(2.5rem,6vw,4.2rem);font-weight:800;line-height:1.1;color:var(--gray-900);margin-bottom:20px;letter-spacing:-0.03em;animation:fadeUp .6s ease .1s both}
+.hero h1 .gradient{background:linear-gradient(135deg,var(--orange-500),var(--indigo-500));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.hero p{font-size:clamp(1rem,2vw,1.2rem);color:var(--gray-500);max-width:600px;margin:0 auto 36px;line-height:1.7;animation:fadeUp .6s ease .2s both}
+.hero-buttons{display:flex;align-items:center;justify-content:center;gap:14px;flex-wrap:wrap;animation:fadeUp .6s ease .3s both}
+.btn{display:inline-flex;align-items:center;gap:8px;padding:12px 24px;border-radius:10px;font-size:0.95rem;font-weight:500;font-family:var(--font);cursor:pointer;border:none;transition:all .2s}
+.btn-primary{background:var(--orange-500);color:var(--white)}
+.btn-primary:hover{background:var(--orange-600);transform:translateY(-2px);box-shadow:0 8px 24px rgba(249,115,22,0.3)}
+.btn-secondary{background:var(--white);color:var(--gray-800);border:1px solid var(--gray-300)}
+.btn-secondary:hover{border-color:var(--gray-400);background:var(--gray-50);transform:translateY(-2px)}
+.btn-icon{font-size:1.1rem}
+.hero-code{margin-top:48px;animation:fadeUp .6s ease .4s both}
+.code-block{display:inline-flex;align-items:center;gap:12px;padding:14px 24px;background:var(--gray-900);border-radius:12px;font-family:'SF Mono','Fira Code',monospace;font-size:0.9rem;color:var(--gray-300);box-shadow:0 4px 24px rgba(0,0,0,0.12)}
+.code-block .prompt{color:var(--orange-500)}
+.code-block .cmd{color:var(--white)}
+.code-block .copy-btn{background:none;border:none;color:var(--gray-500);cursor:pointer;font-size:0.85rem;padding:4px 8px;border-radius:4px;transition:all .2s}
+.code-block .copy-btn:hover{color:var(--white);background:rgba(255,255,255,0.1)}
+
+@keyframes fadeUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+
+/* ═══════ LOGOS ═══════ */
+.logos{padding:60px 0;border-top:1px solid var(--gray-200);border-bottom:1px solid var(--gray-200);background:var(--white)}
+.logos-title{text-align:center;font-size:0.8rem;font-weight:500;text-transform:uppercase;letter-spacing:0.1em;color:var(--gray-400);margin-bottom:32px}
+.logos-grid{display:flex;align-items:center;justify-content:center;gap:48px;flex-wrap:wrap}
+.logos-grid span{font-size:1.1rem;font-weight:600;color:var(--gray-300);white-space:nowrap}
+
+/* ═══════ FEATURES ═══════ */
+.features{padding:100px 0;background:var(--gray-50)}
+.section-label{display:inline-block;font-size:0.75rem;font-weight:600;text-transform:uppercase;letter-spacing:0.1em;color:var(--orange-500);margin-bottom:12px}
+.section-title{font-size:clamp(1.8rem,4vw,2.8rem);font-weight:800;color:var(--gray-900);margin-bottom:16px;letter-spacing:-0.02em;line-height:1.2}
+.section-desc{font-size:1.05rem;color:var(--gray-500);max-width:560px;line-height:1.7}
+.section-header{text-align:center;margin-bottom:60px}
+.section-header .section-desc{margin:0 auto}
+
+.feature-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
+.feature-card{background:var(--white);border:1px solid var(--gray-200);border-radius:16px;padding:32px;transition:all .3s;position:relative;overflow:hidden}
+.feature-card:hover{border-color:var(--gray-300);box-shadow:0 8px 30px rgba(0,0,0,0.06);transform:translateY(-4px)}
+.feature-icon{width:48px;height:48px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:1.4rem;margin-bottom:20px}
+.feature-icon.orange{background:var(--orange-100)}
+.feature-icon.indigo{background:var(--indigo-100)}
+.feature-icon.green{background:var(--green-100)}
+.feature-card h3{font-size:1.1rem;font-weight:700;color:var(--gray-900);margin-bottom:8px}
+.feature-card p{font-size:0.9rem;color:var(--gray-500);line-height:1.65}
+
+/* ═══════ STATS ═══════ */
+.stats{padding:80px 0;background:var(--white)}
+.stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:24px;text-align:center}
+.stat{padding:24px}
+.stat-num{font-size:clamp(2rem,4vw,3.2rem);font-weight:800;color:var(--gray-900);line-height:1;margin-bottom:8px;letter-spacing:-0.03em}
+.stat-num .accent{color:var(--orange-500)}
+.stat-text{font-size:0.9rem;color:var(--gray-500)}
+
+/* ═══════ HOW IT WORKS ═══════ */
+.how-it-works{padding:100px 0;background:var(--gray-50)}
+.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:32px;margin-top:48px}
+.step{text-align:center}
+.step-num{width:48px;height:48px;border-radius:50%;background:var(--orange-500);color:var(--white);font-size:1.1rem;font-weight:700;display:flex;align-items:center;justify-content:center;margin:0 auto 20px}
+.step h3{font-size:1.05rem;font-weight:700;color:var(--gray-900);margin-bottom:8px}
+.step p{font-size:0.9rem;color:var(--gray-500);line-height:1.65}
+
+/* ═══════ BENTO ═══════ */
+.bento{padding:100px 0;background:var(--white)}
+.bento-grid{display:grid;grid-template-columns:repeat(12,1fr);gap:20px}
+.bento-card{background:var(--gray-50);border:1px solid var(--gray-200);border-radius:16px;padding:28px;transition:all .3s}
+.bento-card:hover{border-color:var(--gray-300);box-shadow:0 4px 20px rgba(0,0,0,0.04)}
+.bento-card.span-4{grid-column:span 4}
+.bento-card.span-6{grid-column:span 6}
+.bento-card.span-8{grid-column:span 8}
+.bento-card.span-12{grid-column:span 12}
+.bento-card h3{font-size:1rem;font-weight:700;color:var(--gray-900);margin-bottom:8px;display:flex;align-items:center;gap:8px}
+.bento-card p{font-size:0.85rem;color:var(--gray-500);line-height:1.6}
+.bento-visual{margin-top:16px;background:var(--white);border:1px solid var(--gray-200);border-radius:10px;padding:16px;font-family:'SF Mono','Fira Code',monospace;font-size:0.78rem;color:var(--gray-600);line-height:1.8;overflow:hidden}
+
+/* ═══════ PROVIDERS ═══════ */
+.providers{padding:80px 0;background:var(--gray-50)}
+.providers-grid{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;margin-top:32px}
+.provider-tag{padding:6px 14px;background:var(--white);border:1px solid var(--gray-200);border-radius:8px;font-size:0.8rem;font-weight:500;color:var(--gray-600);transition:all .2s}
+.provider-tag:hover{border-color:var(--orange-500);color:var(--orange-500)}
+
+/* ═══════ CTA ═══════ */
+.cta{padding:100px 0;background:linear-gradient(180deg,var(--white) 0%,var(--gray-50) 100%);text-align:center}
+.cta-box{max-width:680px;margin:0 auto;background:var(--white);border:1px solid var(--gray-200);border-radius:24px;padding:56px 40px;box-shadow:0 12px 40px rgba(0,0,0,0.06)}
+.cta-box h2{font-size:clamp(1.6rem,3vw,2.2rem);font-weight:800;color:var(--gray-900);margin-bottom:12px;letter-spacing:-0.02em}
+.cta-box p{color:var(--gray-500);margin-bottom:28px;font-size:1rem}
+.cta-box .btn-primary{font-size:1rem;padding:14px 32px}
+
+/* ═══════ FOOTER ═══════ */
+footer{padding:48px 0;background:var(--white);border-top:1px solid var(--gray-200)}
+.footer-inner{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:16px}
+.footer-left{font-size:0.85rem;color:var(--gray-500)}
+.footer-left strong{color:var(--gray-800)}
+.footer-links{display:flex;gap:24px}
+.footer-links a{font-size:0.85rem;color:var(--gray-500);transition:color .2s}
+.footer-links a:hover{color:var(--gray-900)}
+
+/* ═══════ SCROLL ANIMATIONS ═══════ */
+.reveal{opacity:0;transform:translateY(30px);transition:all .6s cubic-bezier(.16,1,.3,1)}
+.reveal.visible{opacity:1;transform:translateY(0)}
+.reveal-delay-1{transition-delay:.1s}
+.reveal-delay-2{transition-delay:.2s}
+.reveal-delay-3{transition-delay:.3s}
+
+/* ═══════ RESPONSIVE ═══════ */
+@media(max-width:1024px){
+  .feature-grid{grid-template-columns:repeat(2,1fr)}
+  .bento-card.span-4,.bento-card.span-6{grid-column:span 6}
+  .bento-card.span-8{grid-column:span 12}
+  .stats-grid{grid-template-columns:repeat(2,1fr)}
+}
+@media(max-width:768px){
+  .nav-links{display:none}
+  .nav-mobile{display:block}
+  .nav-links.open{display:flex;flex-direction:column;position:absolute;top:64px;left:0;right:0;background:var(--white);border-bottom:1px solid var(--gray-200);padding:20px 24px;gap:16px;box-shadow:0 4px 12px rgba(0,0,0,0.08)}
+  .hero{padding:110px 0 60px}
+  .feature-grid{grid-template-columns:1fr}
+  .bento-card.span-4,.bento-card.span-6,.bento-card.span-8,.bento-card.span-12{grid-column:span 12}
+  .steps{grid-template-columns:1fr;gap:24px}
+  .stats-grid{grid-template-columns:repeat(2,1fr);gap:16px}
+  .hero-buttons{flex-direction:column;align-items:stretch}
+  .hero-buttons .btn{justify-content:center}
+  .code-block{font-size:0.78rem;padding:12px 16px}
+  .logos-grid{gap:24px}
+  .cta-box{padding:40px 24px}
+  .footer-inner{flex-direction:column;text-align:center}
+}
+@media(max-width:480px){
+  .container{padding:0 16px}
+  .hero h1{font-size:2rem}
+  .section-title{font-size:1.6rem}
+}
+</style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav id="nav">
+<div class="nav-inner">
+  <a href="#" class="nav-logo">⚡ <span>Rally</span> Agent</a>
+  <div class="nav-links" id="navLinks">
+    <a href="#features">Features</a>
+    <a href="#how">How It Works</a>
+    <a href="#providers">Providers</a>
+    <a href="https://github.com/Atum246/rally-agent" target="_blank">GitHub</a>
+    <a href="https://github.com/Atum246/rally-agent" class="nav-cta" target="_blank">Get Started →</a>
+  </div>
+  <button class="nav-mobile" onclick="document.getElementById('navLinks').classList.toggle('open')">☰</button>
+</div>
+</nav>
+
+<!-- HERO -->
+<section class="hero">
+<div class="container">
+  <div class="hero-badge">Open Source · Self-Hosted · MIT Licensed</div>
+  <h1>Your AI.<br><span class="gradient">Your Rules. Your Data.</span></h1>
+  <p>A fully-featured, self-hosted AI agent platform. Connect 36 providers, 52 channels, and 10 specialized agents — all running on your infrastructure.</p>
+  <div class="hero-buttons">
+    <a href="https://github.com/Atum246/rally-agent" class="btn btn-primary" target="_blank"><span class="btn-icon">⚡</span> Get Started Free</a>
+    <a href="https://github.com/Atum246/rally-agent" class="btn btn-secondary" target="_blank"><span class="btn-icon">📦</span> View on GitHub</a>
+  </div>
+  <div class="hero-code">
+    <div class="code-block">
+      <span class="prompt">$</span>
+      <span class="cmd">curl -fsSL https://raw.githubusercontent.com/Atum246/rally-agent/main/install.sh | bash</span>
+      <button class="copy-btn" onclick="navigator.clipboard.writeText('curl -fsSL https://raw.githubusercontent.com/Atum246/rally-agent/main/install.sh | bash').then(()=>{this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500)})">Copy</button>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- LOGOS -->
+<section class="logos">
+<div class="container">
+  <div class="logos-title">Works with your favorite AI providers</div>
+  <div class="logos-grid">
+    <span>OpenAI</span>
+    <span>Anthropic</span>
+    <span>Google</span>
+    <span>Groq</span>
+    <span>Mistral</span>
+    <span>DeepSeek</span>
+    <span>Ollama</span>
+    <span>+ 29 more</span>
+  </div>
+</div>
+</section>
+
+<!-- FEATURES -->
+<section class="features" id="features">
+<div class="container">
+  <div class="section-header">
+    <div class="section-label">Features</div>
+    <h2 class="section-title">Everything you need to run AI<br>on your own terms</h2>
+    <p class="section-desc">No cloud dependencies. No subscription fees. Just a powerful AI platform that runs entirely on your infrastructure.</p>
+  </div>
+  <div class="feature-grid">
+    <div class="feature-card reveal">
+      <div class="feature-icon orange">🔌</div>
+      <h3>36 AI Providers</h3>
+      <p>OpenAI, Anthropic, Google, Groq, Mistral, DeepSeek, Ollama, and more. Automatic fallback chains with circuit breakers.</p>
+    </div>
+    <div class="feature-card reveal reveal-delay-1">
+      <div class="feature-icon indigo">📱</div>
+      <h3>52 Messaging Channels</h3>
+      <p>WhatsApp, Telegram, Discord, Slack, Signal, iMessage, Teams, Email, Twitter, GitHub, and 42 more integrations.</p>
+    </div>
+    <div class="feature-card reveal reveal-delay-2">
+      <div class="feature-icon green">🤖</div>
+      <h3>10 Specialized Agents</h3>
+      <p>Coder, Researcher, Creator, Analyst, PM, Security, DevOps, Writer, QA, and an Orchestrator that coordinates them all.</p>
+    </div>
+    <div class="feature-card reveal">
+      <div class="feature-icon orange">🧠</div>
+      <h3>Persistent Memory</h3>
+      <p>Hybrid vector + BM25 search with RAG context injection. Your AI remembers conversations, learns preferences, and grows over time.</p>
+    </div>
+    <div class="feature-card reveal reveal-delay-1">
+      <div class="feature-icon indigo">🌐</div>
+      <h3>Browser Automation</h3>
+      <p>Playwright-based browser control with stealth mode. Navigate, click, type, and extract data from any website.</p>
+    </div>
+    <div class="feature-card reveal reveal-delay-2">
+      <div class="feature-icon green">🎤</div>
+      <h3>Voice Support</h3>
+      <p>Speech-to-text with Whisper, text-to-speech with 300+ voices, and wake word detection. Talk to your AI naturally.</p>
+    </div>
+    <div class="feature-card reveal">
+      <div class="feature-icon orange">⏰</div>
+      <h3>Cron Automation</h3>
+      <p>Schedule tasks, set up proactive checks, and automate workflows. Your AI works for you even when you're not watching.</p>
+    </div>
+    <div class="feature-card reveal reveal-delay-1">
+      <div class="feature-icon indigo">🔒</div>
+      <h3>Enterprise Security</h3>
+      <p>RBAC, JWT auth, audit logging, secrets vault, sandboxed execution, and prompt injection detection built in.</p>
+    </div>
+    <div class="feature-card reveal reveal-delay-2">
+      <div class="feature-icon green">🔌</div>
+      <h3>Plugin System</h3>
+      <p>Extend Rally with custom plugins. Hot-reload, SDK support, and a marketplace for sharing with the community.</p>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- STATS -->
+<section class="stats">
+<div class="container">
+  <div class="stats-grid">
+    <div class="stat reveal"><div class="stat-num">36<span class="accent">+</span></div><div class="stat-text">AI Providers</div></div>
+    <div class="stat reveal reveal-delay-1"><div class="stat-num">52<span class="accent">+</span></div><div class="stat-text">Channels</div></div>
+    <div class="stat reveal reveal-delay-2"><div class="stat-num">10</div><div class="stat-text">AI Agents</div></div>
+    <div class="stat reveal reveal-delay-3"><div class="stat-num">30<span class="accent">+</span></div><div class="stat-text">Built-in Tools</div></div>
+  </div>
+</div>
+</section>
+
+<!-- HOW IT WORKS -->
+<section class="how-it-works" id="how">
+<div class="container">
+  <div class="section-header">
+    <div class="section-label">How It Works</div>
+    <h2 class="section-title">Up and running in 3 steps</h2>
+    <p class="section-desc">No complex setup. No cloud accounts. Just install, configure, and start chatting.</p>
+  </div>
+  <div class="steps">
+    <div class="step reveal">
+      <div class="step-num">1</div>
+      <h3>Install</h3>
+      <p>One command installs everything. Works on Linux, macOS, and Windows. Docker support included.</p>
+    </div>
+    <div class="step reveal reveal-delay-1">
+      <div class="step-num">2</div>
+      <h3>Configure</h3>
+      <p>Add your API keys (or use local models with Ollama). The setup wizard guides you through it.</p>
+    </div>
+    <div class="step reveal reveal-delay-2">
+      <div class="step-num">3</div>
+      <h3>Use</h3>
+      <p>Chat via CLI, web UI, or any messaging platform. Your AI is ready to help with anything.</p>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- BENTO -->
+<section class="bento" id="bento">
+<div class="container">
+  <div class="section-header">
+    <div class="section-label">Platform</div>
+    <h2 class="section-title">Built for power users</h2>
+    <p class="section-desc">Every feature is designed to be powerful, flexible, and completely under your control.</p>
+  </div>
+  <div class="bento-grid">
+    <div class="bento-card span-6 reveal">
+      <h3>💬 Multi-Model Chat</h3>
+      <p>Switch between providers on the fly. Automatic fallback chains ensure your AI is always available.</p>
+      <div class="bento-visual">
+        <div>→ Using: Claude Sonnet 4</div>
+        <div>→ Fallback: GPT-4o → Gemini 2.5</div>
+        <div>→ Status: <span style="color:var(--green-500)">● Healthy</span></div>
+      </div>
+    </div>
+    <div class="bento-card span-6 reveal reveal-delay-1">
+      <h3>🌿 Conversation Branching</h3>
+      <p>Like git for your conversations. Branch, merge, and explore different conversation paths.</p>
+      <div class="bento-visual">
+        <div>* main (3 messages)</div>
+        <div>&nbsp; * feature-test (7 messages)</div>
+        <div>&nbsp; * alt-approach (2 messages)</div>
+      </div>
+    </div>
+    <div class="bento-card span-4 reveal">
+      <h3>🛠️ 15 Tools</h3>
+      <p>File ops, web search, code execution, calculator, regex, and more.</p>
+    </div>
+    <div class="bento-card span-4 reveal reveal-delay-1">
+      <h3>📊 Observability</h3>
+      <p>Token counting, cost tracking, latency metrics, and request logging.</p>
+    </div>
+    <div class="bento-card span-4 reveal reveal-delay-2">
+      <h3>🔄 Workflow Engine</h3>
+      <p>Record actions and replay them. Automate repetitive tasks.</p>
+    </div>
+    <div class="bento-card span-12 reveal">
+      <h3>🌐 Web UI</h3>
+      <p>Beautiful, responsive web interface with real-time chat, dashboard, agent management, memory browser, and 18 pages of controls. Light and dark mode support.</p>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- PROVIDERS -->
+<section class="providers" id="providers">
+<div class="container">
+  <div class="section-header">
+    <div class="section-label">Providers</div>
+    <h2 class="section-title">Connect any AI provider</h2>
+    <p class="section-desc">Use cloud providers for speed, or run everything locally with Ollama. Mix and match.</p>
+  </div>
+  <div class="providers-grid">
+    <div class="provider-tag">OpenAI</div>
+    <div class="provider-tag">Anthropic</div>
+    <div class="provider-tag">Google Gemini</div>
+    <div class="provider-tag">Groq</div>
+    <div class="provider-tag">Cerebras</div>
+    <div class="provider-tag">SambaNova</div>
+    <div class="provider-tag">Fireworks</div>
+    <div class="provider-tag">Together</div>
+    <div class="provider-tag">OpenRouter</div>
+    <div class="provider-tag">Mistral</div>
+    <div class="provider-tag">DeepSeek</div>
+    <div class="provider-tag">Qwen</div>
+    <div class="provider-tag">Ollama</div>
+    <div class="provider-tag">LM Studio</div>
+    <div class="provider-tag">vLLM</div>
+    <div class="provider-tag">NVIDIA</div>
+    <div class="provider-tag">xAI (Grok)</div>
+    <div class="provider-tag">Cohere</div>
+    <div class="provider-tag">Perplexity</div>
+    <div class="provider-tag">Replicate</div>
+    <div class="provider-tag">Hugging Face</div>
+    <div class="provider-tag">Azure OpenAI</div>
+    <div class="provider-tag">Amazon Bedrock</div>
+    <div class="provider-tag">Baidu</div>
+    <div class="provider-tag">Zhipu</div>
+    <div class="provider-tag">Moonshot</div>
+    <div class="provider-tag">Yi</div>
+    <div class="provider-tag">AI21</div>
+    <div class="provider-tag">Custom Endpoint</div>
+  </div>
+</div>
+</section>
+
+<!-- CTA -->
+<section class="cta">
+<div class="container">
+  <div class="cta-box reveal">
+    <h2>Ready to take control of your AI?</h2>
+    <p>Join developers who are building with Rally Agent. Open source, self-hosted, and free forever.</p>
+    <a href="https://github.com/Atum246/rally-agent" class="btn btn-primary" target="_blank">⭐ Star on GitHub</a>
+  </div>
+</div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+<div class="container">
+  <div class="footer-inner">
+    <div class="footer-left"><strong>⚡ Rally Agent</strong> · MIT License · Built with ❤️</div>
+    <div class="footer-links">
+      <a href="https://github.com/Atum246/rally-agent" target="_blank">GitHub</a>
+      <a href="https://github.com/Atum246/rally-agent#readme" target="_blank">Docs</a>
+      <a href="https://github.com/Atum246/rally-agent/issues" target="_blank">Issues</a>
+    </div>
+  </div>
+</div>
+</footer>
+
+<script>
+// Navbar scroll effect
+window.addEventListener('scroll', () => {
+  document.getElementById('nav').classList.toggle('scrolled', window.scrollY > 20);
+});
+
+// Scroll reveal
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('visible'); observer.unobserve(e.target); }});
+}, { threshold: 0.1, rootMargin: '0px 0px -50px 0px' });
+document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
+</script>
+</body>
+</html>
